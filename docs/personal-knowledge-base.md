@@ -321,6 +321,49 @@ flowchart LR
 - 关键学习状态通过 `LearningEvent` 追溯；争议处理追加补偿事件，不覆盖历史。
 - 默认 Strict Local；网页抓取权限与外部 AI 处理权限分别控制。
 
+### 5.3 模块职责与依赖方向
+
+后端采用“入口层 → 应用层 → 领域层 ← 基础设施层”的依赖规则。依赖指向领域定义的端口和数据结构，不能从领域反向依赖 FastAPI、SQLAlchemy、Milvus、文件系统或 Provider SDK。
+
+```mermaid
+flowchart LR
+  Entry[入口层\nFastAPI / Worker / CLI] --> App[应用层\nUse Case / Unit of Work / Policy]
+  App --> Domain[领域层\n实体 / 值对象 / 状态机 / 端口]
+  Infra[基础设施层\nRepository / Provider / Storage Adapter] --> Domain
+  App --> Ports[领域端口]
+  Infra -. 实现 .-> Ports
+```
+
+| 层级 | 唯一职责 | 允许依赖 | 禁止承担 |
+|---|---|---|---|
+| 入口层 | HTTP/SSE/Job 消息解析、认证上下文注入、DTO 转换和错误映射 | 应用层公开 Use Case | 领域判断、事务编排、Provider 选择、直接读写数据库 |
+| 应用层 | 编排单个用例、事务边界、授权策略、幂等、Outbox 和跨模块流程 | 领域实体、领域服务和端口 | 供应商 SDK 调用、SQL 细节、HTTP 表达细节 |
+| 领域层 | 业务不变量、状态转换、纯计算、领域事件和端口定义 | 标准库及领域内稳定类型 | FastAPI、SQLAlchemy、Milvus、文件路径、环境变量和外部 SDK |
+| 基础设施层 | 实现 Repository、Provider、VectorStore、文件存储、时钟和消息端口 | 领域端口、第三方库和配置层 | 决定业务状态转换、静默 fallback、跨用例编排 |
+
+API 与 Worker 是同一应用层的不同入口：API 创建命令、查询和持久化 Operation；Worker 领取持久化 Job 后调用同一个应用 Use Case。二者不得复制领域规则，Worker 也不得绕过授权、幂等和状态机直接更新业务终态。
+
+领域模块所有权：
+
+- `identity` 独占用户、认证凭据和登录 Session；其他模块只持有 `user_id`，不读取密码或 Session 内部状态。
+- `privacy` 独占授权决策、Provider 凭据引用和审计策略；业务模块提交数据类别与处理目的，不自行判断是否允许外发。
+- `topic` 独占 Topic 生命周期；资料、知识点和学习状态通过 ID 关联，不反向修改 Topic 内部状态。
+- `ingestion` 独占 `SourceDocument`、`SourceRevision`、`IngestionRun` 及发布状态机，并通过端口编排 parser、chunker、embedding 和索引写入。
+- `knowledge_extraction` 产生草稿，`knowledge_review` 独占草稿确认及正式 `KnowledgePoint` 创建；抽取模块不得直接发布正式知识点。
+- `assessment` 独占 Rubric 判题与评分版本；`learning_events` 独占不可变学习事实；`review_scheduler` 只依据事实归约掌握度和复习任务，不改写评分历史。
+- `tutoring`、后续 `rag`、`atlas`、`learner_profile` 和 `ai_companion` 只消费已发布知识与学习事实，不成为核心事实源。
+
+跨模块协作规则：
+
+1. 同一事务内的强一致修改只能由一个应用 Use Case 通过模块公开端口完成，Repository 不得互相调用。
+2. 跨事务流程通过已提交的领域事件、Outbox 或显式应用编排推进；消费者必须幂等。
+3. 跨模块查询使用只读 DTO 或 Query Service，不共享可变 ORM Entity。
+4. Provider 选择由应用层结合 `privacy` 决策和版本化配置完成；Adapter 只执行已选择的调用并返回统一 DTO。
+5. MySQL、Milvus 和文件卷的提交与补偿由 `ingestion` 应用用例按 D04 编排，基础设施 Adapter 不实现伪分布式事务。
+6. API 错误由入口层按 D11 映射；第三方异常必须先在 Adapter 边界转换为稳定应用/领域错误。
+
+公开接口以行为命名，例如 `StartIngestion`、`ApproveKnowledgePointDraft`、`SubmitAssessment` 和 `RecordReviewOutcome`。禁止暴露“任意更新实体”式接口，避免调用方绕过状态机。
+
 ## 6. 核心业务流程
 
 ### 6.1 MVP 闭环与目标演进
