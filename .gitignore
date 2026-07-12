@@ -1,0 +1,51 @@
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials*.json
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Node and frontend
+node_modules/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# IDE and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Runtime data and databases
+data/
+uploads/
+storage/
+models/
+logs/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# Local Docker overrides and generated artifacts
+docker-compose.override.yml
+*.pid
+*.tmp
+*.cache
