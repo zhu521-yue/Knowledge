@@ -1809,7 +1809,60 @@ stateDiagram-v2
 
 后端 API 只暴露业务动作，不暴露底层工具细节。除登录和健康检查外，MVP API 都必须绑定当前 `user_id`。
 
-### 10.0 Identity、Privacy 与 Session API
+### 10.0 统一 API、错误与幂等契约
+
+所有路由先服从本节和 D11，再服从各领域的具体请求 schema。
+
+请求约定：
+
+| 场景 | 必需协议 |
+|---|---|
+| 创建关键业务事实或触发外部副作用 | `Idempotency-Key`；作用域为 `user_id + command_name + key` |
+| 基于当前版本修改、删除或执行状态命令 | 强 `ETag` + `If-Match`；缺失返回 `428`，冲突返回 `412` |
+| 同时涉及防重复与防旧版本覆盖 | 同时要求 `Idempotency-Key` 和 `If-Match` |
+| 异步命令 | `202 Accepted` + `Location` 指向 Operation；重复请求返回同一 Operation |
+| 同步创建资源 | `201 Created` + `Location`；重复幂等请求重放首次已提交结果 |
+
+成功响应直接返回资源、集合或 Operation，不使用 `success/data/message` 通用外壳。异步受理示例：
+
+```json
+{
+  "operation_id": "op_123",
+  "status": "pending",
+  "status_url": "/operations/op_123",
+  "resource_url": "/ingestion-runs/run_123"
+}
+```
+
+Operation 状态统一为 `pending`、`running`、`succeeded`、`failed`、`cancel_requested`、`cancelled`。`202` 只表示命令已可靠受理；最终错误保存在 Operation 的安全 Problem Details 快照中。
+
+错误响应使用 `application/problem+json`：
+
+```json
+{
+  "type": "https://knowledge.local/problems/version-conflict",
+  "title": "Resource version conflict",
+  "status": 412,
+  "detail": "The resource changed. Refresh and retry.",
+  "instance": "/knowledge-point-drafts/draft_123",
+  "code": "VERSION_CONFLICT",
+  "request_id": "req_123",
+  "retryable": false,
+  "errors": []
+}
+```
+
+协议不变量：
+
+- `request_id` 只关联 HTTP、Outbox、Job、Provider 和日志，不作为授权或幂等凭证。
+- 同一幂等键与相同规范化请求摘要返回首次结果；摘要不同返回 `409 IDEMPOTENCY_KEY_REUSED`。
+- `If-Match` 只处理客户端乐观并发，不能替代 Worker 租约、数据库行锁、sequence 和唯一约束。
+- `404` 可用于隐藏其他用户资源存在性；不得通过 `403`、错误细节或耗时差异提供枚举接口。
+- `429` 和可恢复 `503` 携带合理 `Retry-After`；客户端只在 `retryable=true` 时自动重试，并复用原幂等键。
+- Adapter 在边界把第三方异常映射为稳定业务 code；响应不得包含 SQL、堆栈、文件路径、内部主机、正文、Token、API Key 或 Provider 原始响应。
+- 已发布错误 code 的语义不可原地改变；字段错误路径使用 JSON Pointer。
+
+### 10.1 Identity、Privacy 与 Session API
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
