@@ -2253,7 +2253,7 @@ Provider 边界不变量：
 | 版本化运行快照 | MySQL | Run 的 chunk/retrieval 参数、Session 超时参数、BKT/遗忘模型版本 |
 | 用户偏好与授权 | MySQL | 时区、Provider 选择、长期授权、任务级覆盖 |
 | 用户 Provider 凭据 | MySQL 加密字段 | `base_url`、model、API Key 密文；接口只返回掩码 |
-| 启动机密 | Docker Secret 优先，开发时可用 `.env` | 主加密密钥、首个管理员初始化密码 |
+| 启动机密 | Docker Secret 优先，开发时可用 `.env` | 主加密密钥、远程 Embedding 网关密钥；管理员密码只通过一次性 CLI 交互输入 |
 
 工程约束：
 
