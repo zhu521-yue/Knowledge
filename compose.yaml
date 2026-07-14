@@ -58,6 +58,43 @@ services:
     init: true
     restart: unless-stopped
 
+  worker:
+    build:
+      context: ./backend
+    command: ["python", "-m", "app.worker"]
+    networks:
+      - internal
+    environment:
+      KNOWLEDGE_DATABASE_URL: mysql+pymysql://${MYSQL_USER:-knowledge}:${MYSQL_PASSWORD:-knowledge_dev_password}@mysql:3306/${MYSQL_DATABASE:-knowledge}
+      KNOWLEDGE_STORAGE_NOTES_PATH: /app/data/notes
+      KNOWLEDGE_STORAGE_UPLOADS_PATH: /app/data/uploads
+      KNOWLEDGE_STORAGE_RAW_PATH: /app/data/raw
+      KNOWLEDGE_STORAGE_PARSED_PATH: /app/data/parsed
+      KNOWLEDGE_STORAGE_EXPORTS_PATH: /app/data/exports
+      KNOWLEDGE_STORAGE_CACHE_PATH: /app/data/cache
+      KNOWLEDGE_MILVUS_HEALTH_URL: http://milvus:9091/healthz
+      KNOWLEDGE_WORKER_IDLE_SECONDS: ${KNOWLEDGE_WORKER_IDLE_SECONDS:-5}
+    volumes:
+      - ./data/notes:/app/data/notes
+      - ./data/uploads:/app/data/uploads
+      - ./data/raw:/app/data/raw
+      - ./data/parsed:/app/data/parsed
+      - ./data/exports:/app/data/exports
+      - ./data/cache:/app/data/cache
+    depends_on:
+      mysql:
+        condition: service_healthy
+      milvus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker", "--check"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    init: true
+    restart: unless-stopped
+
   mysql:
     image: mysql:8.4
     command:
