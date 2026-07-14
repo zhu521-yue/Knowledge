@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     storage_cache_path: Path = Path("/app/data/cache")
     milvus_health_url: str = "http://milvus:9091/healthz"
     milvus_health_timeout_seconds: float = 2.0
+    worker_idle_seconds: float = 5.0
 
     model_config = SettingsConfigDict(
         env_file=".env",
