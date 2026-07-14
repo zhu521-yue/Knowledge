@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     milvus_health_url: str = "http://milvus:9091/healthz"
     milvus_health_timeout_seconds: float = 2.0
     worker_idle_seconds: float = 5.0
+    session_cookie_name: str = "knowledge_session"
+    session_ttl_seconds: int = 43_200
+    frontend_origin: str = "http://127.0.0.1:3000"
 
     model_config = SettingsConfigDict(
         env_file=".env",

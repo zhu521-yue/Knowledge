@@ -27,7 +27,10 @@ const initialSteps: FlowStep[] = [
   { key: 'bootstrap', label: '初始化首个管理员', state: 'idle', detail: '等待执行' },
   { key: 'invite', label: '管理员创建邀请码', state: 'idle', detail: '等待执行' },
   { key: 'register', label: '邀请码注册用户', state: 'idle', detail: '等待执行' },
-  { key: 'login', label: '密码登录校验', state: 'idle', detail: '等待执行' },
+  { key: 'login', label: '登录并写入安全 Cookie', state: 'idle', detail: '等待执行' },
+  { key: 'me', label: '读取当前会话用户', state: 'idle', detail: '等待执行' },
+  { key: 'refresh', label: '续期当前 Session', state: 'idle', detail: '等待执行' },
+  { key: 'logout', label: '登出并清除 Cookie', state: 'idle', detail: '等待执行' },
   { key: 'invalid', label: '无效邀请码拒绝', state: 'idle', detail: '等待执行' },
   { key: 'disable', label: '账号停用后拒绝登录', state: 'idle', detail: '等待执行' },
 ]
@@ -38,14 +41,24 @@ function uniqueIdentitySeed() {
   return Date.now().toString(36)
 }
 
-async function postJson(path: string, body: unknown, headers?: Record<string, string>) {
+async function postJson(path: string, body?: unknown, headers?: Record<string, string>) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'POST',
+    credentials: 'include',
     headers: {
-      'Content-Type': 'application/json',
+      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       ...headers,
     },
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  const payload = await response.json().catch(() => ({}))
+  return { response, payload }
+}
+
+async function getJson(path: string) {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'GET',
+    credentials: 'include',
   })
   const payload = await response.json().catch(() => ({}))
   return { response, payload }
@@ -54,6 +67,7 @@ async function postJson(path: string, body: unknown, headers?: Record<string, st
 async function patchJson(path: string, body: unknown, headers?: Record<string, string>) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'PATCH',
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       ...headers,
@@ -144,7 +158,29 @@ export function App() {
       if (login.response.status !== 200) {
         throw new Error(`登录失败：${login.payload.detail ?? login.response.status}`)
       }
-      setStep('login', 'ok', `登录成功，角色 ${login.payload.user.role}`)
+      setStep('login', 'ok', `登录成功，HttpOnly Cookie 已由浏览器保存`)
+
+      setStep('me', 'running', '通过 Cookie 读取当前用户')
+      const me = await getJson('/auth/me')
+      if (me.response.status !== 200 || me.payload.user.id !== registeredMember.id) {
+        throw new Error(`会话读取失败：${me.payload.detail ?? me.response.status}`)
+      }
+      setStep('me', 'ok', `当前用户 ${me.payload.user.email}`)
+
+      setStep('refresh', 'running', '续期当前 Session')
+      const refreshed = await postJson('/auth/session/refresh')
+      if (refreshed.response.status !== 200 || refreshed.payload.user.id !== registeredMember.id) {
+        throw new Error(`续期失败：${refreshed.payload.detail ?? refreshed.response.status}`)
+      }
+      setStep('refresh', 'ok', 'Session 已续期')
+
+      setStep('logout', 'running', '登出并清除 Cookie')
+      const loggedOut = await postJson('/auth/logout')
+      const meAfterLogout = await getJson('/auth/me')
+      if (loggedOut.response.status !== 204 || meAfterLogout.response.status !== 401) {
+        throw new Error('登出后仍可读取当前用户')
+      }
+      setStep('logout', 'ok', '登出后当前用户为空')
 
       setStep('invalid', 'running', '尝试使用无效邀请码注册')
       const invalid = await postJson('/auth/register', {
@@ -219,10 +255,11 @@ export function App() {
 
       <section className="identity-panel" aria-labelledby="identity-title">
         <div>
-          <p className="eyebrow">LEA-19 FRONTEND CHECK</p>
-          <h2 id="identity-title">本地身份初始化验证</h2>
+          <p className="eyebrow">LEA-19 / LEA-20 FRONTEND CHECK</p>
+          <h2 id="identity-title">本地身份与会话验证</h2>
           <p>
-            一键验证首个管理员初始化、邀请码注册、密码登录和无效邀请码拒绝。
+            一键验证首个管理员初始化、邀请码注册、密码登录、HttpOnly Cookie 会话、
+            会话续期、登出清除 Cookie、无效邀请码拒绝和停用账号失效。
             这不是最终登录页，而是 M1 阶段的用户可见验收入口。
           </p>
         </div>
