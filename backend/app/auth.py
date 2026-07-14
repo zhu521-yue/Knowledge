@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.engine import Engine
 
@@ -154,6 +154,14 @@ def require_current_user(
     return resolved.user
 
 
+def require_current_admin(
+    user: Annotated[IdentityUser, Depends(require_current_user)],
+) -> IdentityUser:
+    if user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin_required")
+    return user
+
+
 @router.post("/bootstrap-admin", status_code=status.HTTP_201_CREATED)
 def bootstrap_admin(
     payload: BootstrapAdminRequest,
@@ -173,10 +181,10 @@ def bootstrap_admin(
 def create_invitation(
     payload: CreateInvitationRequest,
     service: Annotated[IdentityService, Depends(_identity_service)],
-    actor_user_id: Annotated[str, Header(alias="X-Actor-User-Id")],
+    actor: Annotated[IdentityUser, Depends(require_current_admin)],
 ) -> dict[str, object]:
     result = service.create_invitation(
-        actor_user_id=actor_user_id,
+        actor_user_id=actor.id,
         code=payload.code,
         max_uses=payload.max_uses,
         expires_at=payload.expires_at,
@@ -271,10 +279,10 @@ def set_user_status(
     user_id: str,
     payload: SetUserStatusRequest,
     service: Annotated[IdentityService, Depends(_identity_service)],
-    actor_user_id: Annotated[str, Header(alias="X-Actor-User-Id")],
+    actor: Annotated[IdentityUser, Depends(require_current_admin)],
 ) -> dict[str, object]:
     result = service.set_user_active(
-        actor_user_id=actor_user_id,
+        actor_user_id=actor.id,
         target_user_id=user_id,
         is_active=payload.is_active,
     )

@@ -38,19 +38,17 @@ const initialSteps: FlowStep[] = [
 ]
 
 const apiBaseUrl = `${window.location.protocol}//${window.location.hostname}:8000`
+const identityPassword = 'correct horse battery staple'
 
 function uniqueIdentitySeed() {
   return Date.now().toString(36)
 }
 
-async function postJson(path: string, body?: unknown, headers?: Record<string, string>) {
+async function postJson(path: string, body?: unknown) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'POST',
     credentials: 'include',
-    headers: {
-      ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
-      ...headers,
-    },
+    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const payload = await response.json().catch(() => ({}))
@@ -77,14 +75,11 @@ async function putJson(path: string, body: unknown) {
   return { response, payload }
 }
 
-async function patchJson(path: string, body: unknown, headers?: Record<string, string>) {
+async function patchJson(path: string, body: unknown) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'PATCH',
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...headers,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
   const payload = await response.json().catch(() => ({}))
@@ -113,7 +108,7 @@ export function App() {
     const seed = uniqueIdentitySeed()
     const adminEmail = `admin-${seed}@example.test`
     const memberEmail = `learner-${seed}@example.test`
-    const password = 'correct horse battery staple'
+    const password = identityPassword
     const code = `VERIFY-${seed.toUpperCase()}`
 
     setIsRunning(true)
@@ -148,14 +143,14 @@ export function App() {
         throw new Error('当前数据库已有管理员，请清空本地数据卷后重新验证初始化流程')
       }
       setAdmin(activeAdmin)
-      setStep('bootstrap', 'ok', `管理员 ${activeAdmin.email} 已创建`)
+      const adminLogin = await postJson('/auth/login', { email: adminEmail, password })
+      if (adminLogin.response.status !== 200) {
+        throw new Error(`管理员登录失败：${adminLogin.payload.detail ?? adminLogin.response.status}`)
+      }
+      setStep('bootstrap', 'ok', `管理员 ${activeAdmin.email} 已创建并登录`)
 
-      setStep('invite', 'running', `创建邀请码 ${code}`)
-      const invitation = await postJson(
-        '/auth/invitations',
-        { code, max_uses: 1 },
-        { 'X-Actor-User-Id': activeAdmin.id },
-      )
+      setStep('invite', 'running', `通过管理员 Session 创建邀请码 ${code}`)
+      const invitation = await postJson('/auth/invitations', { code, max_uses: 1 })
       if (invitation.response.status !== 201) {
         throw new Error(`邀请码创建失败：${invitation.payload.detail ?? invitation.response.status}`)
       }
@@ -236,12 +231,14 @@ export function App() {
       }
       setStep('invalid', 'ok', '无效邀请码已按预期拒绝')
 
-      setStep('disable', 'running', `停用 ${memberEmail} 后再次登录`)
-      const disabled = await patchJson(
-        `/auth/users/${registeredMember.id}/status`,
-        { is_active: false },
-        { 'X-Actor-User-Id': activeAdmin.id },
-      )
+      setStep('disable', 'running', `以管理员 Session 停用 ${memberEmail} 后再次登录`)
+      const adminRelogin = await postJson('/auth/login', { email: adminEmail, password })
+      if (adminRelogin.response.status !== 200) {
+        throw new Error(`管理员重新登录失败：${adminRelogin.payload.detail ?? adminRelogin.response.status}`)
+      }
+      const disabled = await patchJson(`/auth/users/${registeredMember.id}/status`, {
+        is_active: false,
+      })
       if (disabled.response.status !== 200) {
         throw new Error(`停用失败：${disabled.payload.detail ?? disabled.response.status}`)
       }
@@ -267,11 +264,16 @@ export function App() {
     if (!admin || !member) return
     setIsRunning(true)
     try {
-      const disabled = await patchJson(
-        `/auth/users/${member.id}/status`,
-        { is_active: false },
-        { 'X-Actor-User-Id': admin.id },
-      )
+      const adminLogin = await postJson('/auth/login', {
+        email: admin.email,
+        password: identityPassword,
+      })
+      if (adminLogin.response.status !== 200) {
+        throw new Error(`管理员登录失败：${adminLogin.payload.detail ?? adminLogin.response.status}`)
+      }
+      const disabled = await patchJson(`/auth/users/${member.id}/status`, {
+        is_active: false,
+      })
       if (disabled.response.status !== 200) {
         throw new Error(`停用失败：${disabled.payload.detail ?? disabled.response.status}`)
       }

@@ -41,6 +41,13 @@ def test_auth_flow_bootstrap_invite_register_login_and_disable(tmp_path: Path) -
         },
     )
     admin = bootstrap.json()["user"]
+    admin_login = client.post(
+        "/auth/login",
+        json={
+            "email": "admin@example.test",
+            "password": "correct horse battery staple",
+        },
+    )
 
     duplicate_bootstrap = client.post(
         "/auth/bootstrap-admin",
@@ -52,7 +59,6 @@ def test_auth_flow_bootstrap_invite_register_login_and_disable(tmp_path: Path) -
     )
     invitation = client.post(
         "/auth/invitations",
-        headers={"X-Actor-User-Id": admin["id"]},
         json={"code": "FRONTEND-VERIFY", "max_uses": 1},
     )
     registered = client.post(
@@ -71,9 +77,15 @@ def test_auth_flow_bootstrap_invite_register_login_and_disable(tmp_path: Path) -
             "password": "correct horse battery staple",
         },
     )
+    admin_relogin = client.post(
+        "/auth/login",
+        json={
+            "email": "admin@example.test",
+            "password": "correct horse battery staple",
+        },
+    )
     disabled = client.patch(
         f"/auth/users/{registered.json()['user']['id']}/status",
-        headers={"X-Actor-User-Id": admin["id"]},
         json={"is_active": False},
     )
     disabled_login = client.post(
@@ -86,11 +98,13 @@ def test_auth_flow_bootstrap_invite_register_login_and_disable(tmp_path: Path) -
 
     assert bootstrap.status_code == 201
     assert admin["role"] == "admin"
+    assert admin_login.status_code == 200
     assert duplicate_bootstrap.status_code == 409
     assert invitation.status_code == 201
     assert registered.status_code == 201
     assert registered.json()["user"]["role"] == "member"
     assert login.status_code == 200
+    assert admin_relogin.status_code == 200
     assert disabled.status_code == 200
     assert disabled.json()["user"]["is_active"] is False
     assert disabled_login.status_code == 403
@@ -112,3 +126,135 @@ def test_register_rejects_invalid_invitation(tmp_path: Path) -> None:
 
     assert response.status_code == 404
     assert response.json()["detail"] == "invitation_not_found"
+
+
+def test_admin_endpoints_reject_missing_or_forged_session(tmp_path: Path) -> None:
+    client = next(auth_client(tmp_path))
+    admin = client.post(
+        "/auth/bootstrap-admin",
+        json={
+            "email": "admin@example.test",
+            "password": "correct horse battery staple",
+            "display_name": "Admin",
+        },
+    ).json()["user"]
+
+    invitation = client.post(
+        "/auth/invitations",
+        headers={"X-Actor-User-Id": admin["id"]},
+        json={"code": "FORGED", "max_uses": 1},
+    )
+    status_change = client.patch(
+        f"/auth/users/{admin['id']}/status",
+        headers={"X-Actor-User-Id": admin["id"]},
+        json={"is_active": False},
+    )
+
+    assert invitation.status_code == 401
+    assert invitation.json()["detail"] == "session_invalid"
+    assert status_change.status_code == 401
+    assert status_change.json()["detail"] == "session_invalid"
+
+
+def test_admin_endpoints_use_only_authenticated_admin_as_actor(tmp_path: Path) -> None:
+    client = next(auth_client(tmp_path))
+    admin = client.post(
+        "/auth/bootstrap-admin",
+        json={
+            "email": "admin@example.test",
+            "password": "correct horse battery staple",
+            "display_name": "Admin",
+        },
+    ).json()["user"]
+    client.post(
+        "/auth/login",
+        json={
+            "email": "admin@example.test",
+            "password": "correct horse battery staple",
+        },
+    )
+    invitation = client.post(
+        "/auth/invitations",
+        json={"code": "SESSION-ACTOR", "max_uses": 1},
+    )
+    member = client.post(
+        "/auth/register",
+        json={
+            "email": "member@example.test",
+            "password": "correct horse battery staple",
+            "display_name": "Member",
+            "invitation_code": "SESSION-ACTOR",
+        },
+    ).json()["user"]
+
+    client.post(
+        "/auth/login",
+        json={
+            "email": "member@example.test",
+            "password": "correct horse battery staple",
+        },
+    )
+    member_invitation = client.post(
+        "/auth/invitations",
+        headers={"X-Actor-User-Id": admin["id"]},
+        json={"code": "MEMBER-FORGE", "max_uses": 1},
+    )
+    member_status_change = client.patch(
+        f"/auth/users/{member['id']}/status",
+        headers={"X-Actor-User-Id": admin["id"]},
+        json={"is_active": False},
+    )
+
+    client.post(
+        "/auth/login",
+        json={
+            "email": "admin@example.test",
+            "password": "correct horse battery staple",
+        },
+    )
+    admin_status_change = client.patch(
+        f"/auth/users/{member['id']}/status",
+        headers={"X-Actor-User-Id": member["id"]},
+        json={"is_active": False},
+    )
+
+    assert invitation.status_code == 201
+    assert invitation.json()["invitation"]["created_by_user_id"] == admin["id"]
+    assert member_invitation.status_code == 403
+    assert member_invitation.json()["detail"] == "admin_required"
+    assert member_status_change.status_code == 403
+    assert member_status_change.json()["detail"] == "admin_required"
+    assert admin_status_change.status_code == 200
+    assert admin_status_change.json()["user"]["is_active"] is False
+
+
+def test_disabled_admin_session_cannot_call_admin_endpoints(tmp_path: Path) -> None:
+    client = next(auth_client(tmp_path))
+    admin = client.post(
+        "/auth/bootstrap-admin",
+        json={
+            "email": "admin@example.test",
+            "password": "correct horse battery staple",
+            "display_name": "Admin",
+        },
+    ).json()["user"]
+    client.post(
+        "/auth/login",
+        json={
+            "email": "admin@example.test",
+            "password": "correct horse battery staple",
+        },
+    )
+
+    disabled = client.patch(
+        f"/auth/users/{admin['id']}/status",
+        json={"is_active": False},
+    )
+    invitation = client.post(
+        "/auth/invitations",
+        json={"code": "DISABLED-ADMIN", "max_uses": 1},
+    )
+
+    assert disabled.status_code == 200
+    assert invitation.status_code == 401
+    assert invitation.json()["detail"] == "session_invalid"
