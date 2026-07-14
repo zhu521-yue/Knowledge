@@ -24,6 +24,7 @@ const capabilities = [
 ] as const
 
 const initialSteps: FlowStep[] = [
+  { key: 'health', label: '检查 API 与依赖健康状态', state: 'idle', detail: '等待执行' },
   { key: 'bootstrap', label: '初始化首个管理员', state: 'idle', detail: '等待执行' },
   { key: 'invite', label: '管理员创建邀请码', state: 'idle', detail: '等待执行' },
   { key: 'register', label: '邀请码注册用户', state: 'idle', detail: '等待执行' },
@@ -122,6 +123,17 @@ export function App() {
     setInvitationCode(null)
 
     try {
+      setStep('health', 'running', '读取 API、数据库、存储和 Milvus 状态')
+      const health = await getJson('/health/ready')
+      const requestId = health.response.headers.get('X-Request-ID')
+      if (health.response.status !== 200 || health.payload.status !== 'ok' || !requestId) {
+        throw new Error(`健康检查失败：${health.payload.status ?? health.response.status}`)
+      }
+      const dependencies = Object.entries(health.payload.dependencies as Record<string, string>)
+        .map(([name, state]) => `${name}=${state}`)
+        .join('，')
+      setStep('health', 'ok', `${dependencies}；request_id=${requestId}`)
+
       setStep('bootstrap', 'running', `请求 ${adminEmail}`)
       const bootstrap = await postJson('/auth/bootstrap-admin', {
         email: adminEmail,
@@ -285,11 +297,11 @@ export function App() {
 
       <section className="identity-panel" aria-labelledby="identity-title">
         <div>
-          <p className="eyebrow">LEA-19 / LEA-20 / LEA-21 FRONTEND CHECK</p>
+          <p className="eyebrow">M1 FRONTEND CHECK</p>
           <h2 id="identity-title">本地身份与会话验证</h2>
           <p>
-            一键验证首个管理员初始化、邀请码注册、密码登录、HttpOnly Cookie 会话、
-            会话续期、Provider 凭据加密与脱敏、登出清除 Cookie、无效邀请码拒绝和停用账号失效。
+            一键验证 API 与依赖健康状态、request_id、本地身份、HttpOnly Cookie 会话、
+            Provider 凭据加密与脱敏、登出清除 Cookie、无效邀请码拒绝和停用账号失效。
             这不是最终登录页，而是 M1 阶段的用户可见验收入口。
           </p>
         </div>

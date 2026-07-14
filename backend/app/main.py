@@ -1,23 +1,21 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.exc import SQLAlchemyError
+from fastapi.responses import JSONResponse
 
 from app.auth import router as auth_router
 from app.config import Settings, get_settings
-from app.infrastructure.database import (
-    check_database_connection,
-    create_database_engine,
-)
-from app.infrastructure.milvus import MilvusUnavailable, check_milvus_health
+from app.infrastructure.database import create_database_engine
+from app.infrastructure.health import inspect_dependencies
 from app.infrastructure.provider_credentials import ProviderCredentialService
-from app.infrastructure.storage import StorageUnavailable, check_storage_paths
+from app.observability import RequestContextMiddleware, configure_structured_logging
 from app.provider_credentials import router as provider_credentials_router
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
+    configure_structured_logging()
     active_settings = settings or get_settings()
     engine = create_database_engine(active_settings)
 
@@ -38,6 +36,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="Knowledge API", lifespan=lifespan)
     app.state.settings = active_settings
+    app.add_middleware(RequestContextMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[active_settings.frontend_origin],
@@ -53,18 +52,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok"}
 
     @app.get("/health/ready", tags=["health"])
-    def ready() -> dict[str, str]:
-        try:
-            check_database_connection(engine)
-            check_storage_paths(active_settings)
-            check_milvus_health(active_settings)
-        except SQLAlchemyError as exc:
-            raise HTTPException(status_code=503, detail="database_unavailable") from exc
-        except StorageUnavailable as exc:
-            raise HTTPException(status_code=503, detail="storage_unavailable") from exc
-        except MilvusUnavailable as exc:
-            raise HTTPException(status_code=503, detail="milvus_unavailable") from exc
-        return {"status": "ok"}
+    def ready() -> JSONResponse:
+        dependencies = inspect_dependencies(engine, active_settings)
+        payload = {
+            "status": "ok" if "unavailable" not in dependencies.values() else "degraded",
+            "service": "api",
+            "dependencies": dependencies,
+        }
+        status_code = 200 if payload["status"] == "ok" else 503
+        return JSONResponse(status_code=status_code, content=payload)
 
     return app
 
