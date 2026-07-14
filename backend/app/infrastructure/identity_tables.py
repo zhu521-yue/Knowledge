@@ -38,6 +38,21 @@ users = Table(
     Index("ix_users_role", "role"),
 )
 
+user_sessions = Table(
+    "user_sessions",
+    identity_metadata,
+    Column("id", String(36), primary_key=True),
+    Column("user_id", String(36), ForeignKey("users.id"), nullable=False),
+    Column("token_hash", String(64), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Column("last_seen_at", DateTime(timezone=True), nullable=False),
+    Column("revoked_at", DateTime(timezone=True), nullable=True),
+    UniqueConstraint("token_hash"),
+    Index("ix_user_sessions_user_id", "user_id"),
+    Index("ix_user_sessions_expires_at", "expires_at"),
+)
+
 invitation_codes = Table(
     "invitation_codes",
     identity_metadata,

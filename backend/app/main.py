@@ -2,6 +2,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.auth import router as auth_router
@@ -25,6 +26,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine.dispose()
 
     app = FastAPI(title="Knowledge API", lifespan=lifespan)
+    app.state.settings = active_settings
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[active_settings.frontend_origin],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.include_router(auth_router)
 
     @app.get("/health/live", tags=["health"])

@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.engine import Engine
 
+from app.config import Settings
 from app.infrastructure.identity import (
     IdentityError,
     IdentityService,
     IdentityUser,
     InvitationCode,
 )
+from app.infrastructure.sessions import SessionService
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -45,9 +47,18 @@ class SetUserStatusRequest(BaseModel):
     is_active: bool
 
 
+def _settings(request: Request) -> Settings:
+    return request.app.state.settings
+
+
 def _identity_service(request: Request) -> IdentityService:
     engine: Engine = request.app.state.database_engine
     return IdentityService(engine)
+
+
+def _session_service(request: Request) -> SessionService:
+    engine: Engine = request.app.state.database_engine
+    return SessionService(engine)
 
 
 def _user_response(user: IdentityUser) -> dict[str, object]:
@@ -97,6 +108,36 @@ def _raise_identity_error(result: IdentityError) -> None:
         status_code=status_by_error.get(result.error, status.HTTP_400_BAD_REQUEST),
         detail=result.error,
     )
+
+
+def _cookie_secure(settings: Settings) -> bool:
+    return settings.app_env == "production"
+
+
+def _set_session_cookie(response: Response, settings: Settings, token: str) -> None:
+    response.set_cookie(
+        key=settings.session_cookie_name,
+        value=token,
+        max_age=settings.session_ttl_seconds,
+        httponly=True,
+        secure=_cookie_secure(settings),
+        samesite="lax",
+        path="/",
+    )
+
+
+def _clear_session_cookie(response: Response, settings: Settings) -> None:
+    response.delete_cookie(
+        key=settings.session_cookie_name,
+        httponly=True,
+        secure=_cookie_secure(settings),
+        samesite="lax",
+        path="/",
+    )
+
+
+def _session_token_from_request(request: Request, settings: Settings) -> str | None:
+    return request.cookies.get(settings.session_cookie_name)
 
 
 @router.post("/bootstrap-admin", status_code=status.HTTP_201_CREATED)
@@ -150,12 +191,73 @@ def register(
 @router.post("/login")
 def login(
     payload: LoginRequest,
-    service: Annotated[IdentityService, Depends(_identity_service)],
+    response: Response,
+    settings: Annotated[Settings, Depends(_settings)],
+    identity_service: Annotated[IdentityService, Depends(_identity_service)],
+    session_service: Annotated[SessionService, Depends(_session_service)],
 ) -> dict[str, object]:
-    result = service.authenticate(email=payload.email, password=payload.password)
+    result = identity_service.authenticate(email=payload.email, password=payload.password)
     if isinstance(result, IdentityError):
         _raise_identity_error(result)
+    session = session_service.create_session(
+        user_id=result.id,
+        ttl=timedelta(seconds=settings.session_ttl_seconds),
+    )
+    _set_session_cookie(response, settings, session.token)
     return {"user": _user_response(result)}
+
+
+@router.get("/me")
+def current_user(
+    request: Request,
+    settings: Annotated[Settings, Depends(_settings)],
+    session_service: Annotated[SessionService, Depends(_session_service)],
+) -> dict[str, object]:
+    session_token = _session_token_from_request(request, settings)
+    if not session_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session_invalid")
+    resolved = session_service.resolve_session(session_token)
+    if resolved is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session_invalid")
+    return {"user": _user_response(resolved.user)}
+
+
+@router.post("/session/refresh")
+def refresh_session(
+    request: Request,
+    response: Response,
+    settings: Annotated[Settings, Depends(_settings)],
+    session_service: Annotated[SessionService, Depends(_session_service)],
+) -> dict[str, object]:
+    session_token = _session_token_from_request(request, settings)
+    if not session_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session_invalid")
+    refreshed = session_service.refresh_session(
+        session_token,
+        ttl=timedelta(seconds=settings.session_ttl_seconds),
+    )
+    if refreshed is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session_invalid")
+    resolved = session_service.resolve_session(session_token)
+    if resolved is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session_invalid")
+    _set_session_cookie(response, settings, session_token)
+    return {"user": _user_response(resolved.user)}
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    request: Request,
+    response: Response,
+    settings: Annotated[Settings, Depends(_settings)],
+    session_service: Annotated[SessionService, Depends(_session_service)],
+) -> Response:
+    session_token = _session_token_from_request(request, settings)
+    if session_token:
+        session_service.revoke_session(session_token)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    _clear_session_cookie(response, settings)
+    return response
 
 
 @router.patch("/users/{user_id}/status")
