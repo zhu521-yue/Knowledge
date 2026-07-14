@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     session_cookie_name: str = "knowledge_session"
     session_ttl_seconds: int = 43_200
     frontend_origin: str = "http://127.0.0.1:3000"
+    provider_credentials_master_key: SecretStr | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -12,7 +12,9 @@ from app.infrastructure.database import (
     create_database_engine,
 )
 from app.infrastructure.milvus import MilvusUnavailable, check_milvus_health
+from app.infrastructure.provider_credentials import ProviderCredentialService
 from app.infrastructure.storage import StorageUnavailable, check_storage_paths
+from app.provider_credentials import router as provider_credentials_router
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -21,6 +23,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        master_key = active_settings.provider_credentials_master_key
+        if master_key is None:
+            raise ValueError(
+                "KNOWLEDGE_PROVIDER_CREDENTIALS_MASTER_KEY is required"
+            )
+        app.state.provider_credential_service = ProviderCredentialService(
+            engine,
+            master_key.get_secret_value(),
+        )
         app.state.database_engine = engine
         yield
         engine.dispose()
@@ -35,6 +46,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(auth_router)
+    app.include_router(provider_credentials_router)
 
     @app.get("/health/live", tags=["health"])
     def live() -> dict[str, str]:

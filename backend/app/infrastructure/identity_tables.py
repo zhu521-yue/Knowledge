@@ -53,6 +53,23 @@ user_sessions = Table(
     Index("ix_user_sessions_expires_at", "expires_at"),
 )
 
+provider_credentials = Table(
+    "provider_credentials",
+    identity_metadata,
+    Column("id", String(36), primary_key=True),
+    Column("user_id", String(36), ForeignKey("users.id"), nullable=False),
+    Column("provider", String(64), nullable=False),
+    Column("encrypted_secret", String(2048), nullable=False),
+    Column("secret_hint", String(4), nullable=False),
+    Column("secret_length", Integer, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("user_id", "provider"),
+    Index("ix_provider_credentials_user_id", "user_id"),
+)
+
+
 invitation_codes = Table(
     "invitation_codes",
     identity_metadata,

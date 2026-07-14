@@ -140,6 +140,20 @@ def _session_token_from_request(request: Request, settings: Settings) -> str | N
     return request.cookies.get(settings.session_cookie_name)
 
 
+def require_current_user(
+    request: Request,
+    settings: Annotated[Settings, Depends(_settings)],
+    session_service: Annotated[SessionService, Depends(_session_service)],
+) -> IdentityUser:
+    session_token = _session_token_from_request(request, settings)
+    if not session_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session_invalid")
+    resolved = session_service.resolve_session(session_token)
+    if resolved is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session_invalid")
+    return resolved.user
+
+
 @router.post("/bootstrap-admin", status_code=status.HTTP_201_CREATED)
 def bootstrap_admin(
     payload: BootstrapAdminRequest,
@@ -209,17 +223,9 @@ def login(
 
 @router.get("/me")
 def current_user(
-    request: Request,
-    settings: Annotated[Settings, Depends(_settings)],
-    session_service: Annotated[SessionService, Depends(_session_service)],
+    user: Annotated[IdentityUser, Depends(require_current_user)],
 ) -> dict[str, object]:
-    session_token = _session_token_from_request(request, settings)
-    if not session_token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session_invalid")
-    resolved = session_service.resolve_session(session_token)
-    if resolved is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="session_invalid")
-    return {"user": _user_response(resolved.user)}
+    return {"user": _user_response(user)}
 
 
 @router.post("/session/refresh")

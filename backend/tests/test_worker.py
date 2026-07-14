@@ -18,6 +18,7 @@ def make_worker_settings(tmp_path: Path) -> Settings:
         storage_cache_path=tmp_path / "cache",
         milvus_health_url="",
         worker_idle_seconds=0.01,
+        provider_credentials_master_key="MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
     )
 
 
