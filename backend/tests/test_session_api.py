@@ -25,7 +25,8 @@ def make_test_settings(tmp_path: Path, app_env: str = "development") -> Settings
 
 def auth_client(tmp_path: Path, app_env: str = "development") -> Iterator[TestClient]:
     app = create_app(make_test_settings(tmp_path, app_env=app_env))
-    with TestClient(app) as client:
+    base_url = "https://testserver" if app_env == "production" else "http://testserver"
+    with TestClient(app, base_url=base_url) as client:
         identity_metadata.create_all(app.state.database_engine)
         yield client
 
@@ -39,9 +40,15 @@ def create_user(client: TestClient) -> tuple[dict[str, object], dict[str, object
             "display_name": "Admin",
         },
     ).json()["user"]
+    client.post(
+        "/auth/login",
+        json={
+            "email": "admin@example.test",
+            "password": "correct horse battery staple",
+        },
+    )
     invitation = client.post(
         "/auth/invitations",
-        headers={"X-Actor-User-Id": admin["id"]},
         json={"code": "COOKIE", "max_uses": 1},
     ).json()["invitation"]
     member = client.post(
@@ -119,7 +126,7 @@ def test_refresh_extends_session_and_logout_clears_cookie(tmp_path: Path) -> Non
 
 def test_disabled_account_invalidates_existing_cookie_session(tmp_path: Path) -> None:
     client = next(auth_client(tmp_path))
-    admin, member = create_user(client)
+    _, member = create_user(client)
     client.post(
         "/auth/login",
         json={
@@ -127,12 +134,20 @@ def test_disabled_account_invalidates_existing_cookie_session(tmp_path: Path) ->
             "password": "correct horse battery staple",
         },
     )
+    member_session = client.cookies.get("knowledge_session")
+    client.post(
+        "/auth/login",
+        json={
+            "email": "admin@example.test",
+            "password": "correct horse battery staple",
+        },
+    )
 
     disabled = client.patch(
         f"/auth/users/{member['id']}/status",
-        headers={"X-Actor-User-Id": admin["id"]},
         json={"is_active": False},
     )
+    client.cookies.set("knowledge_session", member_session)
     me = client.get("/auth/me")
 
     assert disabled.status_code == 200
