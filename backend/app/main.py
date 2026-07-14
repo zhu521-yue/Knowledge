@@ -4,15 +4,18 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.infrastructure.database import (
     check_database_connection,
     create_database_engine,
 )
+from app.infrastructure.milvus import MilvusUnavailable, check_milvus_health
+from app.infrastructure.storage import StorageUnavailable, check_storage_paths
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    engine = create_database_engine(settings)
+    active_settings = settings or get_settings()
+    engine = create_database_engine(active_settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -30,8 +33,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def ready() -> dict[str, str]:
         try:
             check_database_connection(engine)
+            check_storage_paths(active_settings)
+            check_milvus_health(active_settings)
         except SQLAlchemyError as exc:
             raise HTTPException(status_code=503, detail="database_unavailable") from exc
+        except StorageUnavailable as exc:
+            raise HTTPException(status_code=503, detail="storage_unavailable") from exc
+        except MilvusUnavailable as exc:
+            raise HTTPException(status_code=503, detail="milvus_unavailable") from exc
         return {"status": "ok"}
 
     return app

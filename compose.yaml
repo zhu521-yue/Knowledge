@@ -26,8 +26,24 @@ services:
       - internal
     environment:
       KNOWLEDGE_DATABASE_URL: mysql+pymysql://${MYSQL_USER:-knowledge}:${MYSQL_PASSWORD:-knowledge_dev_password}@mysql:3306/${MYSQL_DATABASE:-knowledge}
+      KNOWLEDGE_STORAGE_NOTES_PATH: /app/data/notes
+      KNOWLEDGE_STORAGE_UPLOADS_PATH: /app/data/uploads
+      KNOWLEDGE_STORAGE_RAW_PATH: /app/data/raw
+      KNOWLEDGE_STORAGE_PARSED_PATH: /app/data/parsed
+      KNOWLEDGE_STORAGE_EXPORTS_PATH: /app/data/exports
+      KNOWLEDGE_STORAGE_CACHE_PATH: /app/data/cache
+      KNOWLEDGE_MILVUS_HEALTH_URL: http://milvus:9091/healthz
+    volumes:
+      - ./data/notes:/app/data/notes
+      - ./data/uploads:/app/data/uploads
+      - ./data/raw:/app/data/raw
+      - ./data/parsed:/app/data/parsed
+      - ./data/exports:/app/data/exports
+      - ./data/cache:/app/data/cache
     depends_on:
       mysql:
+        condition: service_healthy
+      milvus:
         condition: service_healthy
     healthcheck:
       test:
@@ -64,6 +80,70 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    restart: unless-stopped
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    command:
+      - etcd
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --data-dir=/etcd
+    volumes:
+      - ./data/milvus/etcd:/etcd
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    command: server /minio_data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-knowledge_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-knowledge_minio_dev_password}
+    volumes:
+      - ./data/milvus/minio:/minio_data
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  milvus:
+    image: milvusdb/milvus:v2.5.0
+    command: ["milvus", "run", "standalone"]
+    security_opt:
+      - seccomp:unconfined
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-knowledge_minio}
+      MINIO_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-knowledge_minio_dev_password}
+    volumes:
+      - ./data/milvus/standalone:/var/lib/milvus
+    networks:
+      - internal
+    depends_on:
+      etcd:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9091/healthz"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
     restart: unless-stopped
 
 networks:
