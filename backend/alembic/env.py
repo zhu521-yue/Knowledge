@@ -3,9 +3,10 @@ from sqlalchemy import engine_from_config, pool
 
 from app.config import get_settings
 from app.infrastructure.execution_tables import execution_metadata
+from app.infrastructure.identity_tables import identity_metadata
 
 config = context.config
-target_metadata = execution_metadata
+target_metadata = [execution_metadata, identity_metadata]
 
 
 def run_migrations_offline() -> None:
