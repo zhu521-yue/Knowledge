@@ -23,7 +23,13 @@ def make_worker_settings(tmp_path: Path) -> Settings:
 
 
 def test_worker_dependency_check(tmp_path: Path) -> None:
-    check_worker_dependencies(make_worker_settings(tmp_path))
+    dependencies = check_worker_dependencies(make_worker_settings(tmp_path))
+
+    assert dependencies == {
+        "database": "ok",
+        "storage": "ok",
+        "milvus": "disabled",
+    }
 
 
 def test_worker_loop_stops_cleanly(tmp_path: Path) -> None:
