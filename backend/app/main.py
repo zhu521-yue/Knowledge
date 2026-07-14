@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.auth import router as auth_router
 from app.config import Settings, get_settings
 from app.infrastructure.database import (
     check_database_connection,
@@ -24,6 +25,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine.dispose()
 
     app = FastAPI(title="Knowledge API", lifespan=lifespan)
+    app.include_router(auth_router)
 
     @app.get("/health/live", tags=["health"])
     def live() -> dict[str, str]:
