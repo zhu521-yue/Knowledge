@@ -17,6 +17,7 @@ def make_test_settings(tmp_path: Path) -> Settings:
         storage_exports_path=tmp_path / "exports",
         storage_cache_path=tmp_path / "cache",
         milvus_health_url="",
+        provider_credentials_master_key="MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
     )
 
 

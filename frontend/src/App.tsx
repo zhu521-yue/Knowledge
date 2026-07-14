@@ -30,6 +30,7 @@ const initialSteps: FlowStep[] = [
   { key: 'login', label: '登录并写入安全 Cookie', state: 'idle', detail: '等待执行' },
   { key: 'me', label: '读取当前会话用户', state: 'idle', detail: '等待执行' },
   { key: 'refresh', label: '续期当前 Session', state: 'idle', detail: '等待执行' },
+  { key: 'credential', label: '加密保存 Provider 凭据', state: 'idle', detail: '等待执行' },
   { key: 'logout', label: '登出并清除 Cookie', state: 'idle', detail: '等待执行' },
   { key: 'invalid', label: '无效邀请码拒绝', state: 'idle', detail: '等待执行' },
   { key: 'disable', label: '账号停用后拒绝登录', state: 'idle', detail: '等待执行' },
@@ -59,6 +60,17 @@ async function getJson(path: string) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'GET',
     credentials: 'include',
+  })
+  const payload = await response.json().catch(() => ({}))
+  return { response, payload }
+}
+
+async function putJson(path: string, body: unknown) {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
   })
   const payload = await response.json().catch(() => ({}))
   return { response, payload }
@@ -174,6 +186,24 @@ export function App() {
       }
       setStep('refresh', 'ok', 'Session 已续期')
 
+      setStep('credential', 'running', '保存测试凭据并检查脱敏响应')
+      const providerSecret = `sk-local-${seed}-4321`
+      const credential = await putJson('/provider-credentials/openai', {
+        secret: providerSecret,
+      })
+      const credentialList = await getJson('/provider-credentials')
+      const maskedSecret = credential.payload.credential?.masked_secret as string | undefined
+      if (
+        credential.response.status !== 200 ||
+        credentialList.response.status !== 200 ||
+        !maskedSecret?.endsWith('4321') ||
+        maskedSecret.includes(providerSecret) ||
+        JSON.stringify(credentialList.payload).includes(providerSecret)
+      ) {
+        throw new Error('Provider 凭据未被正确加密或脱敏')
+      }
+      setStep('credential', 'ok', `OpenAI 凭据仅显示为 ${maskedSecret}`)
+
       setStep('logout', 'running', '登出并清除 Cookie')
       const loggedOut = await postJson('/auth/logout')
       const meAfterLogout = await getJson('/auth/me')
@@ -255,11 +285,11 @@ export function App() {
 
       <section className="identity-panel" aria-labelledby="identity-title">
         <div>
-          <p className="eyebrow">LEA-19 / LEA-20 FRONTEND CHECK</p>
+          <p className="eyebrow">LEA-19 / LEA-20 / LEA-21 FRONTEND CHECK</p>
           <h2 id="identity-title">本地身份与会话验证</h2>
           <p>
             一键验证首个管理员初始化、邀请码注册、密码登录、HttpOnly Cookie 会话、
-            会话续期、登出清除 Cookie、无效邀请码拒绝和停用账号失效。
+            会话续期、Provider 凭据加密与脱敏、登出清除 Cookie、无效邀请码拒绝和停用账号失效。
             这不是最终登录页，而是 M1 阶段的用户可见验收入口。
           </p>
         </div>
