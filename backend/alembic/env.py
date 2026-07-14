@@ -2,9 +2,10 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.config import get_settings
+from app.infrastructure.execution_tables import execution_metadata
 
 config = context.config
-target_metadata = None
+target_metadata = execution_metadata
 
 
 def run_migrations_offline() -> None:
