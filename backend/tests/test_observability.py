@@ -35,6 +35,17 @@ def test_request_id_is_propagated_and_generated(tmp_path: Path) -> None:
     assert generated.headers["X-Request-ID"] != "trace-123"
 
 
+def test_request_id_is_visible_to_browser_clients(tmp_path: Path) -> None:
+    with TestClient(create_app(make_settings(tmp_path))) as client:
+        response = client.get(
+            "/health/ready",
+            headers={"Origin": "http://127.0.0.1:3000"},
+        )
+
+    exposed_headers = response.headers.get("Access-Control-Expose-Headers", "")
+    assert "x-request-id" in exposed_headers.lower()
+
+
 def test_json_formatter_is_structured_and_redacts_sensitive_fields() -> None:
     record = logging.LogRecord(
         name="knowledge.test",
