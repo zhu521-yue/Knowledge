@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 
 from app.auth import require_current_user
 from app.infrastructure.identity import IdentityUser
+from app.infrastructure.source_lifecycle import (
+    SourceDocumentLifecycle,
+    SourceLifecycleError,
+    SourceLifecycleService,
+)
 from app.infrastructure.source_imports import (
     SourceImport,
     SourceImportError,
@@ -22,8 +27,55 @@ class ImportUrlRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
 
 
-def _service(request: Request) -> WebSourceImportService:
+class LifecycleRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=512)
+
+
+def _import_service(request: Request) -> WebSourceImportService:
     return request.app.state.web_source_import_service
+
+
+def _lifecycle_service(request: Request) -> SourceLifecycleService:
+    return SourceLifecycleService(request.app.state.database_engine)
+
+
+def _expected_version(if_match: str | None) -> int:
+    if if_match is None:
+        raise HTTPException(status_code=428, detail="if_match_required")
+    try:
+        value = int(if_match.strip().removeprefix("W/").strip('"'))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="if_match_invalid") from exc
+    if value < 1:
+        raise HTTPException(status_code=400, detail="if_match_invalid")
+    return value
+
+
+def _lifecycle_response(source: SourceDocumentLifecycle) -> dict[str, object]:
+    return {
+        "id": source.id,
+        "title": source.title,
+        "input_type": source.input_type,
+        "state": source.state,
+        "active_revision_id": source.active_revision_id,
+        "version": source.version,
+        "archived_at": source.archived_at.isoformat() if source.archived_at else None,
+        "trashed_at": source.trashed_at.isoformat() if source.trashed_at else None,
+        "purge_after": source.purge_after.isoformat() if source.purge_after else None,
+        "purged_at": source.purged_at.isoformat() if source.purged_at else None,
+        "lifecycle_reason": source.lifecycle_reason,
+    }
+
+
+def _raise_lifecycle_error(error: SourceLifecycleError) -> None:
+    status_by_code = {
+        "source_not_found": 404,
+        "source_version_conflict": 412,
+        "source_transition_invalid": 409,
+        "idempotency_key_conflict": 409,
+        "request_key_required": 422,
+    }
+    raise HTTPException(status_code=status_by_code.get(error.code, 400), detail=error.code)
 
 
 def _response(result: SourceImport) -> dict[str, object]:
@@ -86,7 +138,7 @@ def _raise_fetch_error(error: WebFetchError) -> None:
 @router.post("/url", status_code=status.HTTP_201_CREATED)
 def import_url(
     payload: ImportUrlRequest,
-    service: Annotated[WebSourceImportService, Depends(_service)],
+    service: Annotated[WebSourceImportService, Depends(_import_service)],
     user: Annotated[IdentityUser, Depends(require_current_user)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> dict[str, object]:
@@ -107,3 +159,54 @@ def import_url(
     if isinstance(result, SourceImportError):
         _raise_source_error(result)
     return _response(result)
+
+
+@router.get("")
+def list_sources(
+    service: Annotated[SourceLifecycleService, Depends(_lifecycle_service)],
+    user: Annotated[IdentityUser, Depends(require_current_user)],
+    state_filter: Annotated[str | None, Query(alias="state")] = None,
+) -> dict[str, object]:
+    return {
+        "sources": [
+            _lifecycle_response(source)
+            for source in service.list_for_user(user_id=user.id, state=state_filter)
+        ]
+    }
+
+
+@router.get("/{source_id}")
+def get_source(
+    source_id: str,
+    service: Annotated[SourceLifecycleService, Depends(_lifecycle_service)],
+    user: Annotated[IdentityUser, Depends(require_current_user)],
+) -> dict[str, object]:
+    source = service.get(user_id=user.id, source_id=source_id)
+    if source is None:
+        _raise_lifecycle_error(SourceLifecycleError("source_not_found"))
+    return {"source": _lifecycle_response(source)}
+
+
+@router.post("/{source_id}/{command}")
+def lifecycle_command(
+    source_id: str,
+    command: str,
+    payload: LifecycleRequest,
+    service: Annotated[SourceLifecycleService, Depends(_lifecycle_service)],
+    user: Annotated[IdentityUser, Depends(require_current_user)],
+    if_match: Annotated[str | None, Header(alias="If-Match")] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> dict[str, object]:
+    if idempotency_key is None:
+        raise HTTPException(status_code=428, detail="idempotency_key_required")
+    result = service.command(
+        user_id=user.id,
+        source_id=source_id,
+        command=command,
+        expected_version=_expected_version(if_match),
+        request_key=idempotency_key,
+        reason=payload.reason,
+    )
+    if isinstance(result, SourceLifecycleError):
+        _raise_lifecycle_error(result)
+    return {"source": _lifecycle_response(result)}

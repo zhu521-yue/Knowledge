@@ -47,6 +47,16 @@ type SourceImportResponse = {
   repeated: boolean
 }
 
+type LifecycleSource = {
+  id: string
+  title: string
+  input_type: string
+  state: 'active' | 'archived' | 'trashed' | 'purging' | 'purged'
+  active_revision_id: string | null
+  version: number
+  purge_after: string | null
+}
+
 type RetrievalResponse = {
   retrieval_version: string
   active_run_ids: string[]
@@ -147,6 +157,9 @@ export function App() {
   const [sourceImport, setSourceImport] = useState<SourceImportResponse | null>(null)
   const [sourceImportError, setSourceImportError] = useState('')
   const [isImportingSource, setIsImportingSource] = useState(false)
+  const [lifecycleSources, setLifecycleSources] = useState<LifecycleSource[]>([])
+  const [lifecycleError, setLifecycleError] = useState('')
+  const [isManagingSources, setIsManagingSources] = useState(false)
   const [retrievalQuery, setRetrievalQuery] = useState('')
   const [retrievalResult, setRetrievalResult] = useState<RetrievalResponse | null>(null)
   const [retrievalError, setRetrievalError] = useState('')
@@ -365,6 +378,43 @@ export function App() {
     }
   }
 
+  const loadSources = async () => {
+    setIsManagingSources(true)
+    setLifecycleError('')
+    try {
+      const result = await getJson('/sources?state=all')
+      if (result.response.status !== 200) {
+        throw new Error(result.payload.detail ?? `HTTP ${result.response.status}`)
+      }
+      setLifecycleSources(result.payload.sources as LifecycleSource[])
+    } catch (error) {
+      setLifecycleError(error instanceof Error ? error.message : '资料读取失败')
+    } finally {
+      setIsManagingSources(false)
+    }
+  }
+
+  const changeSourceState = async (source: LifecycleSource, command: string) => {
+    setIsManagingSources(true)
+    setLifecycleError('')
+    try {
+      const result = await postJson(
+        `/sources/${source.id}/${command}`,
+        { reason: 'M2 前端验收操作' },
+        { 'If-Match': `"${source.version}"`, 'Idempotency-Key': crypto.randomUUID() },
+      )
+      if (result.response.status !== 200) {
+        throw new Error(result.payload.detail ?? `HTTP ${result.response.status}`)
+      }
+      const updated = result.payload.source as LifecycleSource
+      setLifecycleSources((current) => current.map((item) => item.id === updated.id ? updated : item))
+    } catch (error) {
+      setLifecycleError(error instanceof Error ? error.message : '状态变更失败')
+    } finally {
+      setIsManagingSources(false)
+    }
+  }
+
   const runRetrieval = async () => {
     setIsRetrieving(true)
     setRetrievalError('')
@@ -497,6 +547,35 @@ export function App() {
             <a href={sourceImport.source.final_url} target="_blank" rel="noreferrer">打开最终来源 URL</a>
           </div>
         ) : null}
+      </section>
+
+      <section className="retrieval-panel lifecycle-panel" aria-labelledby="lifecycle-title">
+        <div className="panel-heading">
+          <p className="eyebrow">M2 SOURCE LIFECYCLE CHECK</p>
+          <h2 id="lifecycle-title">资料归档与回收站</h2>
+          <p>归档资料会退出检索但仍可恢复；移入回收站后立即停用并进入 30 天保留期；彻底删除只提交异步清理任务。</p>
+        </div>
+        <button className="secondary-action" type="button" onClick={loadSources} disabled={isManagingSources}>
+          {isManagingSources ? '处理中...' : '读取我的资料'}
+        </button>
+        {lifecycleError ? <p className="retrieval-error" role="alert">{lifecycleError}</p> : null}
+        <div className="lifecycle-list">
+          {lifecycleSources.map((source) => (
+            <article key={source.id}>
+              <div>
+                <strong>{source.title}</strong>
+                <span>{source.state} · v{source.version}</span>
+                {source.purge_after ? <small>保留至 {new Date(source.purge_after).toLocaleString()}</small> : null}
+              </div>
+              <div className="lifecycle-actions">
+                {source.state === 'active' ? <button onClick={() => changeSourceState(source, 'archive')}>归档</button> : null}
+                {source.state === 'archived' || source.state === 'trashed' ? <button onClick={() => changeSourceState(source, 'restore')}>恢复</button> : null}
+                {source.state === 'active' || source.state === 'archived' ? <button onClick={() => changeSourceState(source, 'trash')}>移入回收站</button> : null}
+                {source.state === 'trashed' ? <button className="danger" onClick={() => changeSourceState(source, 'purge')}>彻底删除</button> : null}
+              </div>
+            </article>
+          ))}
+        </div>
       </section>
 
       <section className="retrieval-panel" aria-labelledby="retrieval-title">
