@@ -39,6 +39,12 @@ source_documents = Table(
     Column("id", String(36), primary_key=True),
     Column("user_id", String(36), ForeignKey("users.id"), nullable=False),
     Column("candidate_id", String(36), nullable=True),
+    Column(
+        "duplicate_of_source_document_id",
+        String(36),
+        ForeignKey("source_documents.id"),
+        nullable=True,
+    ),
     Column("input_type", String(32), nullable=False),
     Column("title", String(512), nullable=False),
     Column("state", String(32), nullable=False),
@@ -58,7 +64,11 @@ source_documents = Table(
         ["source_revisions.source_document_id", "source_revisions.id"],
         name="fk_source_documents_active_revision",
     ),
+    UniqueConstraint(
+        "user_id", "candidate_id", name="uq_source_documents_user_candidate"
+    ),
     Index("ix_source_documents_user_state", "user_id", "state"),
+    Index("ix_source_documents_duplicate_of", "duplicate_of_source_document_id"),
 )
 
 topic_source_documents = Table(

@@ -68,19 +68,22 @@ class RetrieveTopicParents:
 
         parents, children = self._artifacts.load_chunks(resolved.scope.active_run_ids)
         sparse_snapshot = self._artifacts.load_sparse_index(resolved.versions.sparse)
-        query_vector = self._query_embedding.embed_query(
-            normalized_query,
-            user_id=user_id,
-            topic_id=topic_id,
-            index_version=resolved.versions.dense,
-            chunking_version=resolved.versions.chunking,
-        )
-        dense_hits = self._dense_index.search(
-            resolved.versions.dense,
-            query_vector,
-            scope=resolved.scope,
-            limit=20,
-        )
+        if resolved.versions.dense:
+            query_vector = self._query_embedding.embed_query(
+                normalized_query,
+                user_id=user_id,
+                topic_id=topic_id,
+                index_version=resolved.versions.dense,
+                chunking_version=resolved.versions.chunking,
+            )
+            dense_hits = self._dense_index.search(
+                resolved.versions.dense,
+                query_vector,
+                scope=resolved.scope,
+                limit=20,
+            )
+        else:
+            dense_hits = ()
         sparse_hits = search_sparse_index(
             sparse_snapshot,
             normalized_query,

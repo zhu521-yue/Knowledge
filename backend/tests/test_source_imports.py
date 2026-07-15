@@ -76,6 +76,12 @@ def test_web_import_is_atomic_content_addressed_and_idempotent(tmp_path: Path) -
         url="https://www.example.test/start",
         request_key="request-1",
     )
+    repeated_with_new_key = service.import_url(
+        user_id=user_id,
+        topic_id=topic_id,
+        url="https://WWW.EXAMPLE.TEST:443/start#section",
+        request_key="request-2",
+    )
     conflict = service.import_url(
         user_id=user_id,
         topic_id=topic_id,
@@ -84,7 +90,9 @@ def test_web_import_is_atomic_content_addressed_and_idempotent(tmp_path: Path) -
     )
 
     assert created.source_document_id == repeated.source_document_id
+    assert created.source_document_id == repeated_with_new_key.source_document_id
     assert repeated.repeated is True
+    assert repeated_with_new_key.repeated is True
     assert conflict.code == "idempotency_key_conflict"
     assert fetcher.calls == 1
     assert created.title == "Guide"
@@ -93,7 +101,7 @@ def test_web_import_is_atomic_content_addressed_and_idempotent(tmp_path: Path) -
         assert connection.scalar(select(func.count()).select_from(source_revisions)) == 1
         assert connection.scalar(select(func.count()).select_from(content_blobs)) == 1
         assert connection.scalar(select(func.count()).select_from(ingestion_runs)) == 1
-        assert connection.scalar(select(func.count()).select_from(source_import_requests)) == 1
+        assert connection.scalar(select(func.count()).select_from(source_import_requests)) == 2
         assert connection.scalar(select(func.count()).select_from(topic_source_documents)) == 1
         run = connection.execute(select(ingestion_runs)).one()
         document = connection.execute(select(source_documents)).one()
@@ -104,6 +112,27 @@ def test_web_import_is_atomic_content_addressed_and_idempotent(tmp_path: Path) -
     assert run.config_snapshot["final_url"] == "https://www.example.test/guide"
     assert event.aggregate_id == run.id
     assert Path(blob.storage_path).read_text(encoding="utf-8") == "# Intro\n\nHello world.\n"
+
+
+def test_same_url_in_different_topics_stays_distinct(tmp_path: Path) -> None:
+    service, fetcher, user_id, first_topic_id = make_service(tmp_path)
+    second_topic = TopicService(service.engine).create(user_id=user_id, name="Other")
+
+    first = service.import_url(
+        user_id=user_id,
+        topic_id=first_topic_id,
+        url="https://www.example.test/start",
+        request_key="first-topic",
+    )
+    second = service.import_url(
+        user_id=user_id,
+        topic_id=second_topic.id,
+        url="https://WWW.EXAMPLE.TEST:443/start#section",
+        request_key="second-topic",
+    )
+
+    assert first.source_document_id != second.source_document_id
+    assert fetcher.calls == 2
 
 
 def test_web_import_rejects_foreign_topic_before_fetch(tmp_path: Path) -> None:

@@ -3,13 +3,23 @@ from __future__ import annotations
 import argparse
 import logging
 import signal
+import socket
 import threading
+from uuid import uuid4
 
 from sqlalchemy.engine import Engine
 
 from app.config import Settings, get_settings
+from app.dense_index import DenseIndexService
+from app.infrastructure.background_processing import IngestionProcessor, SourcePurgeProcessor
+from app.infrastructure.chunk_store import ChunkStore
 from app.infrastructure.database import create_database_engine
+from app.infrastructure.dense_milvus import MilvusDenseIndex
+from app.infrastructure.embedding_settings import EmbeddingSettingsService
 from app.infrastructure.health import require_dependencies
+from app.infrastructure.parsed_document_store import ParsedDocumentStore
+from app.infrastructure.provider_credentials import ProviderCredentialService
+from app.infrastructure.sparse_index_store import SparseIndexStore
 from app.observability import configure_structured_logging
 
 logger = logging.getLogger(__name__)
@@ -47,8 +57,35 @@ def run_worker(
             extra={"service": "worker", "dependencies": dependencies},
         )
 
-        while not active_stop_event.wait(active_settings.worker_idle_seconds):
-            logger.debug("worker_idle")
+        master_key = active_settings.provider_credentials_master_key
+        if master_key is None:
+            raise ValueError("KNOWLEDGE_PROVIDER_CREDENTIALS_MASTER_KEY is required")
+        worker_id = f"{socket.gethostname()}-{uuid4().hex[:12]}"
+        dense_index = DenseIndexService(MilvusDenseIndex(active_settings.milvus_uri))
+        sparse_store = SparseIndexStore(active_settings.storage_cache_path / "sparse")
+        ingestion = IngestionProcessor(
+            engine=active_engine,
+            parsed_store=ParsedDocumentStore(active_settings.storage_parsed_path),
+            chunk_store=ChunkStore(active_settings.storage_parsed_path),
+            sparse_store=sparse_store,
+            dense_index=dense_index,
+            embedding_settings=EmbeddingSettingsService(active_engine),
+            credentials=ProviderCredentialService(
+                active_engine,
+                master_key.get_secret_value(),
+            ),
+        )
+        purges = SourcePurgeProcessor(
+            engine=active_engine,
+            parsed_root=active_settings.storage_parsed_path,
+            sparse_store=sparse_store,
+            dense_index=dense_index,
+            worker_id=worker_id,
+        )
+        while not active_stop_event.is_set():
+            processed = ingestion.process_next() or purges.process_next()
+            if not processed:
+                active_stop_event.wait(active_settings.worker_idle_seconds)
     finally:
         active_engine.dispose()
 
