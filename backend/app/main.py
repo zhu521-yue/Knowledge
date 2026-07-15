@@ -12,6 +12,7 @@ from app.infrastructure.health import inspect_dependencies
 from app.infrastructure.provider_credentials import ProviderCredentialService
 from app.observability import RequestContextMiddleware, configure_structured_logging
 from app.provider_credentials import router as provider_credentials_router
+from app.topics import router as topics_router
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -47,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(auth_router)
     app.include_router(provider_credentials_router)
+    app.include_router(topics_router)
 
     @app.get("/health/live", tags=["health"])
     def live() -> dict[str, str]:
