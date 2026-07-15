@@ -183,4 +183,6 @@ def test_store_isolates_immutable_run_artifacts(tmp_path: Path) -> None:
     assert second_path == tmp_path / "run-2" / "chunks.v1.json"
     assert json.loads(first_path.read_text(encoding="utf-8"))["ingestion_run_id"] == "run-1"
     assert json.loads(second_path.read_text(encoding="utf-8"))["ingestion_run_id"] == "run-2"
+    assert store.read("run-1") == first
+    assert store.read("run-2") == second
     assert list(tmp_path.rglob("*.tmp")) == []
