@@ -145,7 +145,10 @@ class SourceLifecycleService:
     def list_for_user(
         self, *, user_id: str, state: str | None = None
     ) -> tuple[SourceDocumentLifecycle, ...]:
-        query = select(source_documents).where(source_documents.c.user_id == user_id)
+        query = select(source_documents).where(
+            source_documents.c.user_id == user_id,
+            source_documents.c.duplicate_of_source_document_id.is_(None),
+        )
         if state is None:
             query = query.where(source_documents.c.state == "active")
         elif state == "all":

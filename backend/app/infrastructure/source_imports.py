@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from urllib.parse import urlsplit, urlunsplit
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from sqlalchemy import Engine, select
 from sqlalchemy.exc import IntegrityError
@@ -41,6 +42,24 @@ class SourceImport:
 @dataclass(frozen=True, slots=True)
 class SourceImportError:
     code: str
+
+
+def _normalize_url(value: str) -> str:
+    parsed = urlsplit(value.strip())
+    scheme = parsed.scheme.lower()
+    hostname = (parsed.hostname or "").lower()
+    port = parsed.port
+    netloc = f"[{hostname}]" if ":" in hostname else hostname
+    if port is not None and not (
+        (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    ):
+        netloc = f"{netloc}:{port}"
+    return urlunsplit((scheme, netloc, parsed.path or "/", parsed.query, ""))
+
+
+def _source_candidate_id(topic_id: str, url: str) -> str:
+    identity = f"knowledge:web-source:{topic_id}:{_normalize_url(url)}"
+    return str(uuid5(NAMESPACE_URL, identity))
 
 
 def _utc_now() -> datetime:
@@ -109,9 +128,10 @@ class WebSourceImportService:
         now: datetime | None = None,
     ) -> SourceImport | SourceImportError:
         normalized_key = request_key.strip()
-        normalized_url = url.strip()
+        normalized_url = _normalize_url(url)
         if not normalized_key:
             return SourceImportError("request_key_required")
+        candidate_id = _source_candidate_id(topic_id, normalized_url)
         request_hash = hashlib.sha256(
             f"{topic_id}\0{normalized_url}".encode("utf-8")
         ).hexdigest()
@@ -130,6 +150,18 @@ class WebSourceImportService:
             ).scalar_one_or_none()
         if owned_topic is None:
             return SourceImportError("topic_not_found")
+        existing_source = self._find_source_identity(
+            user_id=user_id,
+            candidate_id=candidate_id,
+        )
+        if existing_source is not None:
+            return self._remember_replay(
+                user_id=user_id,
+                request_key=normalized_key,
+                request_hash=request_hash,
+                existing=existing_source,
+                now=now or _utc_now(),
+            )
 
         page = self.fetcher.fetch(normalized_url)
         document = parse_html(page.content, source_url=page.final_url)
@@ -147,6 +179,7 @@ class WebSourceImportService:
             topic_id=topic_id,
             request_key=normalized_key,
             request_hash=request_hash,
+            candidate_id=candidate_id,
             page=page,
             title=title,
             content_hash=content_hash,
@@ -162,6 +195,7 @@ class WebSourceImportService:
         topic_id: str,
         request_key: str,
         request_hash: str,
+        candidate_id: str,
         page: FetchedWebPage,
         title: str,
         content_hash: str,
@@ -205,7 +239,8 @@ class WebSourceImportService:
                     source_documents.insert().values(
                         id=source_id,
                         user_id=user_id,
-                        candidate_id=None,
+                        candidate_id=candidate_id,
+                        duplicate_of_source_document_id=None,
                         input_type="web_url",
                         title=title,
                         state="active",
@@ -293,15 +328,90 @@ class WebSourceImportService:
                 )
         except IntegrityError:
             existing = self._find_request(user_id=user_id, request_key=request_key)
-            if existing is None:
-                raise
-            if existing.request_hash != request_hash:
-                return SourceImportError("idempotency_key_conflict")
-            return _result(existing, repeated=True)
+            if existing is not None:
+                if existing.request_hash != request_hash:
+                    return SourceImportError("idempotency_key_conflict")
+                return _result(existing, repeated=True)
+            concurrent_source = self._find_source_identity(
+                user_id=user_id,
+                candidate_id=candidate_id,
+            )
+            if concurrent_source is not None:
+                return self._remember_replay(
+                    user_id=user_id,
+                    request_key=request_key,
+                    request_hash=request_hash,
+                    existing=concurrent_source,
+                    now=now,
+                )
+            raise
         row = self._find_request(user_id=user_id, request_key=request_key)
         if row is None:
             raise RuntimeError("source import transaction did not persist")
         return _result(row, repeated=False)
+
+    def _remember_replay(
+        self,
+        *,
+        user_id: str,
+        request_key: str,
+        request_hash: str,
+        existing: Any,
+        now: datetime,
+    ) -> SourceImport | SourceImportError:
+        try:
+            with self.engine.begin() as connection:
+                connection.execute(
+                    source_import_requests.insert().values(
+                        id=str(uuid4()),
+                        user_id=user_id,
+                        request_key=request_key,
+                        request_hash=request_hash,
+                        source_document_id=existing.source_document_id,
+                        source_revision_id=existing.source_revision_id,
+                        ingestion_run_id=existing.ingestion_run_id,
+                        created_at=now,
+                    )
+                )
+        except IntegrityError:
+            replay = self._find_request(user_id=user_id, request_key=request_key)
+            if replay is None:
+                raise
+            if replay.request_hash != request_hash:
+                return SourceImportError("idempotency_key_conflict")
+            return _result(replay, repeated=True)
+        replay = self._find_request(user_id=user_id, request_key=request_key)
+        if replay is None:
+            raise RuntimeError("source import replay did not persist")
+        return _result(replay, repeated=True)
+
+    def _find_source_identity(self, *, user_id: str, candidate_id: str) -> Any | None:
+        with self.engine.connect() as connection:
+            return connection.execute(
+                select(
+                    source_import_requests.c.source_document_id,
+                    source_import_requests.c.source_revision_id,
+                    source_import_requests.c.ingestion_run_id,
+                    source_import_requests.c.request_hash,
+                    ingestion_runs.c.config_snapshot,
+                )
+                .select_from(
+                    source_documents.join(
+                        source_import_requests,
+                        source_import_requests.c.source_document_id == source_documents.c.id,
+                    ).join(
+                        ingestion_runs,
+                        ingestion_runs.c.id == source_import_requests.c.ingestion_run_id,
+                    )
+                )
+                .where(
+                    source_documents.c.user_id == user_id,
+                    source_documents.c.candidate_id == candidate_id,
+                    source_documents.c.duplicate_of_source_document_id.is_(None),
+                )
+                .order_by(source_import_requests.c.created_at)
+                .limit(1)
+            ).one_or_none()
 
     def _find_request(self, *, user_id: str, request_key: str) -> Any | None:
         with self.engine.connect() as connection:

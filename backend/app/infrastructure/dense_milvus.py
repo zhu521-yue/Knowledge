@@ -84,8 +84,11 @@ class MilvusDenseIndex:
     def delete_runs(self, index_version: str, run_ids: frozenset[str]) -> None:
         if not run_ids:
             return
+        collection = _collection_name(index_version)
+        if not self._client.has_collection(collection_name=collection):
+            return
         self._client.delete(
-            collection_name=_collection_name(index_version),
+            collection_name=collection,
             filter=_filter_expression(None, run_ids),
         )
 
