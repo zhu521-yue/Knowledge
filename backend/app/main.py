@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 
 from app.auth import router as auth_router
 from app.config import Settings, get_settings
+from app.ingestion import router as ingestion_router
 from app.infrastructure.database import create_database_engine
 from app.infrastructure.health import inspect_dependencies
 from app.infrastructure.provider_credentials import ProviderCredentialService
@@ -47,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expose_headers=["X-Request-ID"],
     )
     app.include_router(auth_router)
+    app.include_router(ingestion_router)
     app.include_router(provider_credentials_router)
     app.include_router(topics_router)
 
