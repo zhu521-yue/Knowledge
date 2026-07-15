@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, update
 
 from app.dense_index import DenseIndexRecord, DenseIndexService, DenseSearchHit
 from app.infrastructure.background_processing import IngestionProcessor, SourcePurgeProcessor
@@ -168,6 +168,35 @@ def test_worker_publishes_bm25_only_import_and_retrieval_returns_evidence(
     assert "Hello world" in result.parents[0].text
     assert result.parents[0].evidence[0].dense_rank is None
     assert dense_backend.calls == []
+
+
+def test_retrieval_scope_excludes_migration_duplicate_history(tmp_path: Path) -> None:
+    (
+        engine,
+        user_id,
+        topic_id,
+        imported,
+        processor,
+        _dense,
+        _dense_backend,
+        _sparse,
+        _chunks,
+    ) = _fixture(tmp_path)
+    processor.process_next()
+    with engine.begin() as connection:
+        connection.execute(
+            update(source_documents)
+            .where(source_documents.c.id == imported.source_document_id)
+            .values(duplicate_of_source_document_id=imported.source_document_id)
+        )
+
+    resolved = RetrievalScopeResolver(engine).resolve(
+        user_id=user_id, topic_id=topic_id
+    )
+
+    assert resolved is not None
+    assert resolved.scope.active_run_ids == frozenset()
+    assert resolved.versions is None
 
 
 def test_worker_records_failure_when_source_artifact_is_missing(tmp_path: Path) -> None:
