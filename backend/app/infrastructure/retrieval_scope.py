@@ -68,6 +68,7 @@ class RetrievalScopeResolver:
                     topic_source_documents.c.topic_id == topic_id,
                     source_documents.c.user_id == user_id,
                     source_documents.c.state == "active",
+                    source_documents.c.duplicate_of_source_document_id.is_(None),
                     source_documents.c.source_missing.is_(False),
                     ingestion_runs.c.user_id == user_id,
                     ingestion_runs.c.status == "published",
