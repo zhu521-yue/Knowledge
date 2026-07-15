@@ -9,7 +9,11 @@ from sqlalchemy import Engine, select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.infrastructure.execution_tables import outbox_events
-from app.infrastructure.source_tables import ingestion_runs, source_revisions
+from app.infrastructure.source_tables import (
+    ingestion_runs,
+    source_documents,
+    source_revisions,
+)
 
 _STAGE_TRANSITIONS = {
     "parsing": ("extracting", "running", 20),
@@ -283,6 +287,18 @@ class IngestionRunService:
                     source_revisions.c.source_document_id == run.source_document_id,
                 )
                 .values(active_ingestion_run_id=run_id)
+            )
+            connection.execute(
+                update(source_documents)
+                .where(
+                    source_documents.c.id == run.source_document_id,
+                    source_documents.c.user_id == user_id,
+                )
+                .values(
+                    active_revision_id=run.source_revision_id,
+                    updated_at=active_now,
+                    version=source_documents.c.version + 1,
+                )
             )
             connection.execute(
                 update(ingestion_runs)

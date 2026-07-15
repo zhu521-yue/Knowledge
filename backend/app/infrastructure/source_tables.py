@@ -69,6 +69,30 @@ topic_source_documents = Table(
     Index("ix_topic_source_documents_source", "source_document_id"),
 )
 
+source_import_requests = Table(
+    "source_import_requests",
+    identity_metadata,
+    Column("id", String(36), primary_key=True),
+    Column("user_id", String(36), ForeignKey("users.id"), nullable=False),
+    Column("request_key", String(128), nullable=False),
+    Column("request_hash", String(64), nullable=False),
+    Column("source_document_id", String(36), ForeignKey("source_documents.id"), nullable=False),
+    Column("source_revision_id", String(36), nullable=False),
+    Column("ingestion_run_id", String(36), nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("user_id", "request_key"),
+    ForeignKeyConstraint(
+        ["source_document_id", "source_revision_id"],
+        ["source_revisions.source_document_id", "source_revisions.id"],
+        name="fk_source_import_requests_revision",
+    ),
+    ForeignKeyConstraint(
+        ["source_revision_id", "ingestion_run_id"],
+        ["ingestion_runs.source_revision_id", "ingestion_runs.id"],
+        name="fk_source_import_requests_run",
+    ),
+)
+
 content_blobs = Table(
     "content_blobs",
     identity_metadata,

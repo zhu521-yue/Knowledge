@@ -180,7 +180,13 @@ def test_publish_switches_active_run_only_after_validation() -> None:
                 source_revisions.c.id == revision_id
             )
         ).scalar_one()
+        active_revision = connection.execute(
+            select(source_documents.c.active_revision_id).where(
+                source_documents.c.id == published.source_document_id
+            )
+        ).scalar_one()
     assert active == run.id
+    assert active_revision == revision_id
 
 
 def test_failure_compensates_without_replacing_previous_active_run() -> None:
