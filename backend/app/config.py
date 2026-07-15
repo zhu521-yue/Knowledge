@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     storage_exports_path: Path = Path("/app/data/exports")
     storage_cache_path: Path = Path("/app/data/cache")
     milvus_health_url: str = "http://milvus:9091/healthz"
+    milvus_uri: str = "http://milvus:19530"
     milvus_health_timeout_seconds: float = Field(default=2.0, gt=0)
     worker_idle_seconds: float = Field(default=5.0, gt=0)
     session_cookie_name: str = "knowledge_session"

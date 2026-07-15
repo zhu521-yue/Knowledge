@@ -33,6 +33,7 @@ services:
       KNOWLEDGE_STORAGE_EXPORTS_PATH: /app/data/exports
       KNOWLEDGE_STORAGE_CACHE_PATH: /app/data/cache
       KNOWLEDGE_MILVUS_HEALTH_URL: http://milvus:9091/healthz
+      KNOWLEDGE_MILVUS_URI: http://milvus:19530
       KNOWLEDGE_PROVIDER_CREDENTIALS_MASTER_KEY: ${KNOWLEDGE_PROVIDER_CREDENTIALS_MASTER_KEY:?set KNOWLEDGE_PROVIDER_CREDENTIALS_MASTER_KEY}
     volumes:
       - ./data/notes:/app/data/notes
@@ -74,6 +75,7 @@ services:
       KNOWLEDGE_STORAGE_EXPORTS_PATH: /app/data/exports
       KNOWLEDGE_STORAGE_CACHE_PATH: /app/data/cache
       KNOWLEDGE_MILVUS_HEALTH_URL: http://milvus:9091/healthz
+      KNOWLEDGE_MILVUS_URI: http://milvus:19530
       KNOWLEDGE_WORKER_IDLE_SECONDS: ${KNOWLEDGE_WORKER_IDLE_SECONDS:-5}
     volumes:
       - ./data/notes:/app/data/notes
