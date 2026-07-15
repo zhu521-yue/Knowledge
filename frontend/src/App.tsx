@@ -25,7 +25,7 @@ const capabilities = [
 
 const initialSteps: FlowStep[] = [
   { key: 'health', label: '检查 API 与依赖健康状态', state: 'idle', detail: '等待执行' },
-  { key: 'bootstrap', label: '初始化首个管理员', state: 'idle', detail: '等待执行' },
+  { key: 'bootstrap', label: '初始化或登录验收管理员', state: 'idle', detail: '等待执行' },
   { key: 'invite', label: '管理员创建邀请码', state: 'idle', detail: '等待执行' },
   { key: 'register', label: '邀请码注册用户', state: 'idle', detail: '等待执行' },
   { key: 'login', label: '登录并写入安全 Cookie', state: 'idle', detail: '等待执行' },
@@ -89,6 +89,9 @@ async function patchJson(path: string, body: unknown) {
 export function App() {
   const [steps, setSteps] = useState<FlowStep[]>(initialSteps)
   const [isRunning, setIsRunning] = useState(false)
+  const [adminEmail, setAdminEmail] = useState(
+    () => window.localStorage.getItem('knowledge.m1.adminEmail') ?? '',
+  )
   const [admin, setAdmin] = useState<ApiUser | null>(null)
   const [member, setMember] = useState<ApiUser | null>(null)
   const [invitationCode, setInvitationCode] = useState<string | null>(null)
@@ -106,10 +109,17 @@ export function App() {
 
   const runIdentityFlow = async () => {
     const seed = uniqueIdentitySeed()
-    const adminEmail = `admin-${seed}@example.test`
+    const verificationAdminEmail = adminEmail.trim().toLowerCase()
     const memberEmail = `learner-${seed}@example.test`
     const password = identityPassword
     const code = `VERIFY-${seed.toUpperCase()}`
+
+    if (!verificationAdminEmail) {
+      setStep('bootstrap', 'error', '请输入验收管理员邮箱')
+      return
+    }
+
+    window.localStorage.setItem('knowledge.m1.adminEmail', verificationAdminEmail)
 
     setIsRunning(true)
     setSteps(initialSteps)
@@ -129,25 +139,37 @@ export function App() {
         .join('，')
       setStep('health', 'ok', `${dependencies}；request_id=${requestId}`)
 
-      setStep('bootstrap', 'running', `请求 ${adminEmail}`)
+      setStep('bootstrap', 'running', `初始化或登录 ${verificationAdminEmail}`)
       const bootstrap = await postJson('/auth/bootstrap-admin', {
-        email: adminEmail,
+        email: verificationAdminEmail,
         password,
         display_name: 'Local Admin',
       })
       if (![201, 409].includes(bootstrap.response.status)) {
         throw new Error(`初始化失败：${bootstrap.payload.detail ?? bootstrap.response.status}`)
       }
-      const activeAdmin = bootstrap.payload.user as ApiUser | undefined
-      if (!activeAdmin) {
-        throw new Error('当前数据库已有管理员，请清空本地数据卷后重新验证初始化流程')
+      const adminLogin = await postJson('/auth/login', {
+        email: verificationAdminEmail,
+        password,
+      })
+      if (adminLogin.response.status !== 200) {
+        const detail = bootstrap.response.status === 409
+          ? '管理员已存在，请填写首次验证时创建的管理员邮箱'
+          : (adminLogin.payload.detail ?? adminLogin.response.status)
+        throw new Error(`管理员登录失败：${detail}`)
+      }
+      const activeAdmin = adminLogin.payload.user as ApiUser
+      if (activeAdmin.role !== 'admin' || !activeAdmin.is_active) {
+        throw new Error('验收账号不是启用状态的管理员')
       }
       setAdmin(activeAdmin)
-      const adminLogin = await postJson('/auth/login', { email: adminEmail, password })
-      if (adminLogin.response.status !== 200) {
-        throw new Error(`管理员登录失败：${adminLogin.payload.detail ?? adminLogin.response.status}`)
-      }
-      setStep('bootstrap', 'ok', `管理员 ${activeAdmin.email} 已创建并登录`)
+      setStep(
+        'bootstrap',
+        'ok',
+        bootstrap.response.status === 201
+          ? `管理员 ${activeAdmin.email} 已创建并登录`
+          : `已有管理员 ${activeAdmin.email} 已登录`,
+      )
 
       setStep('invite', 'running', `通过管理员 Session 创建邀请码 ${code}`)
       const invitation = await postJson('/auth/invitations', { code, max_uses: 1 })
@@ -232,7 +254,10 @@ export function App() {
       setStep('invalid', 'ok', '无效邀请码已按预期拒绝')
 
       setStep('disable', 'running', `以管理员 Session 停用 ${memberEmail} 后再次登录`)
-      const adminRelogin = await postJson('/auth/login', { email: adminEmail, password })
+      const adminRelogin = await postJson('/auth/login', {
+        email: verificationAdminEmail,
+        password,
+      })
       if (adminRelogin.response.status !== 200) {
         throw new Error(`管理员重新登录失败：${adminRelogin.payload.detail ?? adminRelogin.response.status}`)
       }
@@ -307,7 +332,18 @@ export function App() {
             这不是最终登录页，而是 M1 阶段的用户可见验收入口。
           </p>
         </div>
-        <button type="button" onClick={runIdentityFlow} disabled={isRunning}>
+        <label className="verification-field">
+          <span>验收管理员邮箱</span>
+          <input
+            type="email"
+            value={adminEmail}
+            onChange={(event) => setAdminEmail(event.target.value)}
+            placeholder="首次运行时填写；后续使用同一邮箱"
+            autoComplete="username"
+            disabled={isRunning}
+          />
+        </label>
+        <button type="button" onClick={runIdentityFlow} disabled={isRunning || !adminEmail.trim()}>
           {isRunning ? '验证中...' : '运行身份流程验证'}
         </button>
         <ol className="flow-steps">
