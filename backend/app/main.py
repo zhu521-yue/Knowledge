@@ -7,12 +7,23 @@ from fastapi.responses import JSONResponse
 
 from app.auth import router as auth_router
 from app.config import Settings, get_settings
+from app.dense_index import DenseIndexService
+from app.embedding_settings_api import router as embedding_settings_router
 from app.ingestion import router as ingestion_router
+from app.infrastructure.chunk_store import ChunkStore
 from app.infrastructure.database import create_database_engine
+from app.infrastructure.dense_milvus import MilvusDenseIndex
+from app.infrastructure.embedding_query import AuthorizedQueryEmbedding
+from app.infrastructure.embedding_settings import EmbeddingSettingsService
 from app.infrastructure.health import inspect_dependencies
 from app.infrastructure.provider_credentials import ProviderCredentialService
+from app.infrastructure.retrieval_artifacts import FileRetrievalArtifacts
+from app.infrastructure.retrieval_scope import RetrievalScopeResolver
+from app.infrastructure.sparse_index_store import SparseIndexStore
 from app.observability import RequestContextMiddleware, configure_structured_logging
 from app.provider_credentials import router as provider_credentials_router
+from app.retrieval_api import router as retrieval_router
+from app.retrieval_service import RetrieveTopicParents
 from app.topics import router as topics_router
 
 
@@ -28,9 +39,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise ValueError(
                 "KNOWLEDGE_PROVIDER_CREDENTIALS_MASTER_KEY is required"
             )
-        app.state.provider_credential_service = ProviderCredentialService(
+        credential_service = ProviderCredentialService(
             engine,
             master_key.get_secret_value(),
+        )
+        app.state.provider_credential_service = credential_service
+        embedding_settings = EmbeddingSettingsService(engine)
+        app.state.retrieval_use_case = RetrieveTopicParents(
+            scope_resolver=RetrievalScopeResolver(engine),
+            query_embedding=AuthorizedQueryEmbedding(
+                embedding_settings,
+                credential_service,
+            ),
+            dense_index=DenseIndexService(MilvusDenseIndex(active_settings.milvus_uri)),
+            artifacts=FileRetrievalArtifacts(
+                chunks=ChunkStore(active_settings.storage_parsed_path),
+                sparse_indexes=SparseIndexStore(
+                    active_settings.storage_cache_path / "sparse"
+                ),
+            ),
         )
         app.state.database_engine = engine
         yield
@@ -48,8 +75,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expose_headers=["X-Request-ID"],
     )
     app.include_router(auth_router)
+    app.include_router(embedding_settings_router)
     app.include_router(ingestion_router)
     app.include_router(provider_credentials_router)
+    app.include_router(retrieval_router)
     app.include_router(topics_router)
 
     @app.get("/health/live", tags=["health"])

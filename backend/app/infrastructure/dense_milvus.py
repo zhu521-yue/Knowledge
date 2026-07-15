@@ -13,7 +13,14 @@ from app.retrieval_scope import AuthorizedRetrievalScope
 
 class MilvusDenseIndex:
     def __init__(self, uri: str) -> None:
-        self._client = MilvusClient(uri=uri)
+        self._uri = uri
+        self._active_client: MilvusClient | None = None
+
+    @property
+    def _client(self) -> MilvusClient:
+        if self._active_client is None:
+            self._active_client = MilvusClient(uri=self._uri)
+        return self._active_client
 
     def ensure_collection(self, index_version: str, dimension: int) -> None:
         collection = _collection_name(index_version)

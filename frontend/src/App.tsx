@@ -8,6 +8,33 @@ type ApiUser = {
   is_active: boolean
 }
 
+type RetrievalEvidence = {
+  child_chunk_id: string
+  text: string
+  page_start: number
+  page_end: number
+  dense_rank: number | null
+  sparse_rank: number | null
+  rrf_score: number
+}
+
+type RetrievalParent = {
+  parent_chunk_id: string
+  source_document_id: string
+  heading_path: string[]
+  page_start: number
+  page_end: number
+  text: string
+  score: number
+  evidence: RetrievalEvidence[]
+}
+
+type RetrievalResponse = {
+  retrieval_version: string
+  active_run_ids: string[]
+  parents: RetrievalParent[]
+}
+
 type StepState = 'idle' | 'running' | 'ok' | 'error'
 
 type FlowStep = {
@@ -95,6 +122,11 @@ export function App() {
   const [admin, setAdmin] = useState<ApiUser | null>(null)
   const [member, setMember] = useState<ApiUser | null>(null)
   const [invitationCode, setInvitationCode] = useState<string | null>(null)
+  const [retrievalTopicId, setRetrievalTopicId] = useState('')
+  const [retrievalQuery, setRetrievalQuery] = useState('')
+  const [retrievalResult, setRetrievalResult] = useState<RetrievalResponse | null>(null)
+  const [retrievalError, setRetrievalError] = useState('')
+  const [isRetrieving, setIsRetrieving] = useState(false)
 
   const finishedCount = useMemo(
     () => steps.filter((step) => step.state === 'ok').length,
@@ -285,6 +317,26 @@ export function App() {
     }
   }
 
+  const runRetrieval = async () => {
+    setIsRetrieving(true)
+    setRetrievalError('')
+    setRetrievalResult(null)
+    try {
+      const result = await postJson('/retrieval', {
+        topic_id: retrievalTopicId.trim(),
+        query: retrievalQuery.trim(),
+      })
+      if (result.response.status !== 200) {
+        throw new Error(result.payload.detail ?? `HTTP ${result.response.status}`)
+      }
+      setRetrievalResult(result.payload.retrieval as RetrievalResponse)
+    } catch (error) {
+      setRetrievalError(error instanceof Error ? error.message : '检索失败')
+    } finally {
+      setIsRetrieving(false)
+    }
+  }
+
   const disableMember = async () => {
     if (!admin || !member) return
     setIsRunning(true)
@@ -366,6 +418,56 @@ export function App() {
             停用注册用户
           </button>
         </div>
+      </section>
+
+      <section className="retrieval-panel" aria-labelledby="retrieval-title">
+        <div className="panel-heading">
+          <p className="eyebrow">M2 RETRIEVAL CHECK</p>
+          <h2 id="retrieval-title">Topic 内 Top 3 检索</h2>
+          <p>输入已发布资料所属的 Topic ID 和问题，检查 Dense、BM25 与 RRF 融合结果。此页面只展示资料证据，不调用 LLM 生成答案。</p>
+        </div>
+        <div className="retrieval-form">
+          <label>
+            <span>Topic ID</span>
+            <input value={retrievalTopicId} onChange={(event) => setRetrievalTopicId(event.target.value)} placeholder="输入 Topic ID" />
+          </label>
+          <label>
+            <span>检索问题</span>
+            <textarea value={retrievalQuery} onChange={(event) => setRetrievalQuery(event.target.value)} placeholder="例如：RRF 如何融合两路排名？" rows={3} />
+          </label>
+          <button type="button" onClick={runRetrieval} disabled={isRetrieving || !retrievalTopicId.trim() || !retrievalQuery.trim()}>
+            {isRetrieving ? '检索中...' : '运行检索'}
+          </button>
+        </div>
+        {retrievalError ? <p className="retrieval-error" role="alert">{retrievalError}</p> : null}
+        {retrievalResult ? (
+          <div className="retrieval-results" aria-live="polite">
+            <div className="retrieval-meta">
+              <span>{retrievalResult.retrieval_version}</span>
+              <span>{retrievalResult.active_run_ids.length} 个 active Run</span>
+              <span>{retrievalResult.parents.length} 个 Parent</span>
+            </div>
+            {retrievalResult.parents.length === 0 ? <p className="empty-result">当前 Topic 没有可检索的已发布资料。</p> : null}
+            {retrievalResult.parents.map((parent, index) => (
+              <article key={parent.parent_chunk_id}>
+                <header>
+                  <strong>#{index + 1} {parent.heading_path.join(' / ') || '未命名章节'}</strong>
+                  <span>第 {parent.page_start}–{parent.page_end} 页 · RRF {parent.score.toFixed(5)}</span>
+                </header>
+                <p>{parent.text}</p>
+                <details>
+                  <summary>{parent.evidence.length} 条命中 Child 证据</summary>
+                  {parent.evidence.map((evidence) => (
+                    <div className="evidence" key={evidence.child_chunk_id}>
+                      <span>Dense #{evidence.dense_rank ?? '—'} · BM25 #{evidence.sparse_rank ?? '—'} · {evidence.rrf_score.toFixed(5)}</span>
+                      <p>{evidence.text}</p>
+                    </div>
+                  ))}
+                </details>
+              </article>
+            ))}
+          </div>
+        ) : null}
       </section>
 
       <section className="capabilities" aria-label="核心能力">

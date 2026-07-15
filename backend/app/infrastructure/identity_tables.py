@@ -69,6 +69,25 @@ provider_credentials = Table(
     Index("ix_provider_credentials_user_id", "user_id"),
 )
 
+embedding_settings = Table(
+    "embedding_settings",
+    identity_metadata,
+    Column("user_id", String(36), ForeignKey("users.id"), primary_key=True),
+    Column("enabled", Boolean, nullable=False),
+    Column("provider", String(64), nullable=False),
+    Column("credential_name", String(64), nullable=False),
+    Column("base_url", String(2048), nullable=False),
+    Column("model", String(256), nullable=False),
+    Column("model_identifier", String(512), nullable=False),
+    Column("dimension", Integer, nullable=False),
+    Column("response_format", String(32), nullable=False),
+    Column("normalization", String(32), nullable=False),
+    Column("distance_metric", String(32), nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+)
+
 
 invitation_codes = Table(
     "invitation_codes",
