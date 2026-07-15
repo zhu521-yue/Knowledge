@@ -47,6 +47,12 @@ source_documents = Table(
     Column("version", Integer, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    Column("archived_at", DateTime(timezone=True), nullable=True),
+    Column("trashed_at", DateTime(timezone=True), nullable=True),
+    Column("purge_after", DateTime(timezone=True), nullable=True),
+    Column("purged_at", DateTime(timezone=True), nullable=True),
+    Column("lifecycle_actor_user_id", String(36), nullable=True),
+    Column("lifecycle_reason", String(512), nullable=True),
     ForeignKeyConstraint(
         ["id", "active_revision_id"],
         ["source_revisions.source_document_id", "source_revisions.id"],
@@ -91,6 +97,34 @@ source_import_requests = Table(
         ["ingestion_runs.source_revision_id", "ingestion_runs.id"],
         name="fk_source_import_requests_run",
     ),
+)
+
+source_lifecycle_commands = Table(
+    "source_lifecycle_commands",
+    identity_metadata,
+    Column("id", String(36), primary_key=True),
+    Column("user_id", String(36), ForeignKey("users.id"), nullable=False),
+    Column("source_document_id", String(36), ForeignKey("source_documents.id"), nullable=False),
+    Column("command", String(32), nullable=False),
+    Column("request_key", String(128), nullable=False),
+    Column("request_hash", String(64), nullable=False),
+    Column("result_version", Integer, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    UniqueConstraint("user_id", "command", "request_key"),
+)
+
+source_lifecycle_events = Table(
+    "source_lifecycle_events",
+    identity_metadata,
+    Column("id", String(36), primary_key=True),
+    Column("source_document_id", String(36), ForeignKey("source_documents.id"), nullable=False),
+    Column("user_id", String(36), ForeignKey("users.id"), nullable=False),
+    Column("actor_user_id", String(36), ForeignKey("users.id"), nullable=False),
+    Column("from_state", String(32), nullable=False),
+    Column("to_state", String(32), nullable=False),
+    Column("reason", String(512), nullable=True),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Index("ix_source_lifecycle_events_source_created", "source_document_id", "created_at"),
 )
 
 content_blobs = Table(
