@@ -43,6 +43,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["X-Request-ID"],
     )
     app.include_router(auth_router)
     app.include_router(provider_credentials_router)
