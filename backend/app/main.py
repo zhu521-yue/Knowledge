@@ -19,11 +19,14 @@ from app.infrastructure.health import inspect_dependencies
 from app.infrastructure.provider_credentials import ProviderCredentialService
 from app.infrastructure.retrieval_artifacts import FileRetrievalArtifacts
 from app.infrastructure.retrieval_scope import RetrievalScopeResolver
+from app.infrastructure.source_imports import WebSourceImportService
 from app.infrastructure.sparse_index_store import SparseIndexStore
+from app.infrastructure.web_fetch import SafeWebFetcher
 from app.observability import RequestContextMiddleware, configure_structured_logging
 from app.provider_credentials import router as provider_credentials_router
 from app.retrieval_api import router as retrieval_router
 from app.retrieval_service import RetrieveTopicParents
+from app.sources import router as sources_router
 from app.topics import router as topics_router
 
 
@@ -44,6 +47,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             master_key.get_secret_value(),
         )
         app.state.provider_credential_service = credential_service
+        app.state.web_source_import_service = WebSourceImportService(
+            engine,
+            active_settings.storage_raw_path,
+            SafeWebFetcher(),
+        )
         embedding_settings = EmbeddingSettingsService(engine)
         app.state.retrieval_use_case = RetrieveTopicParents(
             scope_resolver=RetrievalScopeResolver(engine),
@@ -79,6 +87,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ingestion_router)
     app.include_router(provider_credentials_router)
     app.include_router(retrieval_router)
+    app.include_router(sources_router)
     app.include_router(topics_router)
 
     @app.get("/health/live", tags=["health"])

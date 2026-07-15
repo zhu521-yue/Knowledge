@@ -62,6 +62,11 @@ h1 { margin: 1rem 0 1.25rem; font-size: clamp(3rem, 8vw, 6.8rem); line-height: .
 .retrieval-form button { border: 0; border-radius: 999px; padding: .85rem 1.15rem; color: #062014; background: #79e6a5; font-weight: 800; cursor: pointer; }
 .retrieval-form button:disabled { cursor: not-allowed; opacity: .55; }
 .retrieval-error { color: #ffaaaa; }
+.source-import-panel { border-color: #3c5b7c; background: linear-gradient(145deg, rgba(10, 24, 31, .94), rgba(9, 17, 14, .9)); }
+.source-import-result { display: grid; gap: .45rem; margin-top: 1.5rem; padding: 1.2rem; border: 1px solid #35566a; border-radius: 18px; color: #b9cbc1; background: rgba(7, 19, 24, .72); }
+.source-import-result strong { color: #ecf5ef; font-size: 1.1rem; }
+.source-import-result span { overflow-wrap: anywhere; font-family: ui-monospace, monospace; font-size: .82rem; }
+.source-import-result a { width: fit-content; color: #79e6a5; }
 .retrieval-meta { display: flex; flex-wrap: wrap; gap: .6rem; margin: 1.5rem 0 1rem; }
 .retrieval-meta span { padding: .45rem .7rem; border: 1px solid #2a4437; border-radius: 999px; color: #9fc7ae; font-family: ui-monospace, monospace; font-size: .78rem; }
 .retrieval-results article { margin-top: .8rem; padding: 1.25rem; border: 1px solid #2a4437; border-radius: 18px; background: rgba(6, 18, 13, .62); }

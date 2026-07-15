@@ -29,6 +29,24 @@ type RetrievalParent = {
   evidence: RetrievalEvidence[]
 }
 
+type SourceImportResponse = {
+  source: {
+    id: string
+    title: string
+    revision_id: string
+    original_url: string
+    final_url: string
+    fetched_at: string
+  }
+  ingestion_run: {
+    id: string
+    status: string
+    checkpoint: string
+    progress: number
+  }
+  repeated: boolean
+}
+
 type RetrievalResponse = {
   retrieval_version: string
   active_run_ids: string[]
@@ -71,11 +89,13 @@ function uniqueIdentitySeed() {
   return Date.now().toString(36)
 }
 
-async function postJson(path: string, body?: unknown) {
+async function postJson(path: string, body?: unknown, extraHeaders: Record<string, string> = {}) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'POST',
     credentials: 'include',
-    headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+    headers: body === undefined
+      ? extraHeaders
+      : { 'Content-Type': 'application/json', ...extraHeaders },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
   const payload = await response.json().catch(() => ({}))
@@ -123,6 +143,10 @@ export function App() {
   const [member, setMember] = useState<ApiUser | null>(null)
   const [invitationCode, setInvitationCode] = useState<string | null>(null)
   const [retrievalTopicId, setRetrievalTopicId] = useState('')
+  const [sourceUrl, setSourceUrl] = useState('')
+  const [sourceImport, setSourceImport] = useState<SourceImportResponse | null>(null)
+  const [sourceImportError, setSourceImportError] = useState('')
+  const [isImportingSource, setIsImportingSource] = useState(false)
   const [retrievalQuery, setRetrievalQuery] = useState('')
   const [retrievalResult, setRetrievalResult] = useState<RetrievalResponse | null>(null)
   const [retrievalError, setRetrievalError] = useState('')
@@ -317,6 +341,30 @@ export function App() {
     }
   }
 
+  const runSourceImport = async () => {
+    setIsImportingSource(true)
+    setSourceImportError('')
+    setSourceImport(null)
+    try {
+      const result = await postJson(
+        '/sources/url',
+        { topic_id: retrievalTopicId.trim(), url: sourceUrl.trim() },
+        { 'Idempotency-Key': crypto.randomUUID() },
+      )
+      if (result.response.status !== 201) {
+        const detail = typeof result.payload.detail === 'object'
+          ? result.payload.detail.code
+          : result.payload.detail
+        throw new Error(detail ?? `HTTP ${result.response.status}`)
+      }
+      setSourceImport(result.payload as SourceImportResponse)
+    } catch (error) {
+      setSourceImportError(error instanceof Error ? error.message : '网页导入失败')
+    } finally {
+      setIsImportingSource(false)
+    }
+  }
+
   const runRetrieval = async () => {
     setIsRetrieving(true)
     setRetrievalError('')
@@ -418,6 +466,37 @@ export function App() {
             停用注册用户
           </button>
         </div>
+      </section>
+
+      <section className="retrieval-panel source-import-panel" aria-labelledby="source-import-title">
+        <div className="panel-heading">
+          <p className="eyebrow">M2 WEB IMPORT CHECK</p>
+          <h2 id="source-import-title">导入静态网页资料</h2>
+          <p>提交一次明确授权的公开网页 URL。系统会执行 SSRF 防护、受限下载和正文快照，再创建待处理的不可变资料版本。</p>
+        </div>
+        <div className="retrieval-form">
+          <label>
+            <span>Topic ID</span>
+            <input value={retrievalTopicId} onChange={(event) => setRetrievalTopicId(event.target.value)} placeholder="资料所属 Topic ID" />
+          </label>
+          <label>
+            <span>公开静态网页 URL</span>
+            <input type="url" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://example.com/article" />
+          </label>
+          <button type="button" onClick={runSourceImport} disabled={isImportingSource || !retrievalTopicId.trim() || !sourceUrl.trim()}>
+            {isImportingSource ? '抓取中...' : '导入网页'}
+          </button>
+        </div>
+        {sourceImportError ? <p className="retrieval-error" role="alert">{sourceImportError}</p> : null}
+        {sourceImport ? (
+          <div className="source-import-result" role="status">
+            <strong>{sourceImport.source.title}</strong>
+            <span>资料 ID：{sourceImport.source.id}</span>
+            <span>Revision：{sourceImport.source.revision_id}</span>
+            <span>Run：{sourceImport.ingestion_run.id} · {sourceImport.ingestion_run.status} / {sourceImport.ingestion_run.checkpoint}</span>
+            <a href={sourceImport.source.final_url} target="_blank" rel="noreferrer">打开最终来源 URL</a>
+          </div>
+        ) : null}
       </section>
 
       <section className="retrieval-panel" aria-labelledby="retrieval-title">
