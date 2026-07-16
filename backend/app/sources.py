@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, Request, UploadFile, status
 from pydantic import BaseModel, Field
 
 from app.auth import require_current_user
@@ -13,6 +13,7 @@ from app.infrastructure.source_lifecycle import (
     SourceLifecycleService,
 )
 from app.infrastructure.source_imports import (
+    LocalSourceImportService,
     SourceImport,
     SourceImportError,
     WebSourceImportService,
@@ -27,12 +28,22 @@ class ImportUrlRequest(BaseModel):
     url: str = Field(min_length=1, max_length=2048)
 
 
+class ImportTextRequest(BaseModel):
+    topic_id: str = Field(min_length=1, max_length=36)
+    title: str = Field(min_length=1, max_length=512)
+    content: str = Field(min_length=1)
+
+
 class LifecycleRequest(BaseModel):
     reason: str | None = Field(default=None, max_length=512)
 
 
 def _import_service(request: Request) -> WebSourceImportService:
     return request.app.state.web_source_import_service
+
+
+def _local_import_service(request: Request) -> LocalSourceImportService:
+    return request.app.state.local_source_import_service
 
 
 def _lifecycle_service(request: Request) -> SourceLifecycleService:
@@ -83,14 +94,14 @@ def _response(result: SourceImport) -> dict[str, object]:
         "source": {
             "id": result.source_document_id,
             "title": result.title,
-            "input_type": "web_url",
+            "input_type": result.input_type,
             "state": "active",
             "active_revision_id": None,
             "revision_id": result.source_revision_id,
             "original_url": result.original_url,
             "final_url": result.final_url,
             "content_hash": result.content_hash,
-            "fetched_at": result.fetched_at.isoformat(),
+            "fetched_at": result.fetched_at.isoformat() if result.fetched_at else None,
         },
         "ingestion_run": {
             "id": result.ingestion_run_id,
@@ -109,6 +120,12 @@ def _raise_source_error(error: SourceImportError) -> None:
         "idempotency_key_conflict": status.HTTP_409_CONFLICT,
         "web_content_empty": status.HTTP_422_UNPROCESSABLE_CONTENT,
         "web_content_too_large": status.HTTP_413_CONTENT_TOO_LARGE,
+        "text_content_empty": status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "text_content_too_large": status.HTTP_413_CONTENT_TOO_LARGE,
+        "pdf_invalid": status.HTTP_422_UNPROCESSABLE_CONTENT,
+        "pdf_content_too_large": status.HTTP_413_CONTENT_TOO_LARGE,
+        "pdf_page_limit_exceeded": status.HTTP_413_CONTENT_TOO_LARGE,
+        "pdf_text_not_found": status.HTTP_422_UNPROCESSABLE_CONTENT,
     }
     raise HTTPException(
         status_code=status_by_code.get(error.code, status.HTTP_400_BAD_REQUEST),
@@ -156,6 +173,53 @@ def import_url(
         )
     except WebFetchError as error:
         _raise_fetch_error(error)
+    if isinstance(result, SourceImportError):
+        _raise_source_error(result)
+    return _response(result)
+
+
+@router.post("/text", status_code=status.HTTP_201_CREATED)
+def import_text(
+    payload: ImportTextRequest,
+    service: Annotated[LocalSourceImportService, Depends(_local_import_service)],
+    user: Annotated[IdentityUser, Depends(require_current_user)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> dict[str, object]:
+    if idempotency_key is None:
+        raise HTTPException(status_code=428, detail="idempotency_key_required")
+    result = service.import_text(
+        user_id=user.id,
+        topic_id=payload.topic_id,
+        title=payload.title,
+        content=payload.content,
+        request_key=idempotency_key,
+    )
+    if isinstance(result, SourceImportError):
+        _raise_source_error(result)
+    return _response(result)
+
+
+@router.post("/pdf", status_code=status.HTTP_201_CREATED)
+async def import_pdf(
+    service: Annotated[LocalSourceImportService, Depends(_local_import_service)],
+    user: Annotated[IdentityUser, Depends(require_current_user)],
+    topic_id: Annotated[str, Form(min_length=1, max_length=36)],
+    title: Annotated[str, Form(min_length=1, max_length=512)],
+    file: Annotated[UploadFile, File()],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> dict[str, object]:
+    if idempotency_key is None:
+        raise HTTPException(status_code=428, detail="idempotency_key_required")
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=415, detail="pdf_content_type_required")
+    content = await file.read(LocalSourceImportService.MAX_PDF_BYTES + 1)
+    result = service.import_pdf(
+        user_id=user.id,
+        topic_id=topic_id,
+        title=title,
+        content=content,
+        request_key=idempotency_key,
+    )
     if isinstance(result, SourceImportError):
         _raise_source_error(result)
     return _response(result)
