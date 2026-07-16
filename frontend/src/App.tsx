@@ -34,9 +34,9 @@ type SourceImportResponse = {
     id: string
     title: string
     revision_id: string
-    original_url: string
-    final_url: string
-    fetched_at: string
+    original_url: string | null
+    final_url: string | null
+    fetched_at: string | null
   }
   ingestion_run: {
     id: string
@@ -112,6 +112,17 @@ async function postJson(path: string, body?: unknown, extraHeaders: Record<strin
   return { response, payload }
 }
 
+async function postForm(path: string, form: FormData, extraHeaders: Record<string, string> = {}) {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: extraHeaders,
+    body: form,
+  })
+  const payload = await response.json().catch(() => ({}))
+  return { response, payload }
+}
+
 async function getJson(path: string) {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'GET',
@@ -154,7 +165,12 @@ export function App() {
   const [invitationCode, setInvitationCode] = useState<string | null>(null)
   const [retrievalTopicId, setRetrievalTopicId] = useState('')
   const [sourceUrl, setSourceUrl] = useState('')
+  const [sourceTitle, setSourceTitle] = useState('')
+  const [sourceText, setSourceText] = useState('')
+  const [sourcePdf, setSourcePdf] = useState<File | null>(null)
   const [sourceImport, setSourceImport] = useState<SourceImportResponse | null>(null)
+  const [localSourceImport, setLocalSourceImport] = useState<SourceImportResponse | null>(null)
+  const [localSourceImportError, setLocalSourceImportError] = useState('')
   const [sourceImportError, setSourceImportError] = useState('')
   const [isImportingSource, setIsImportingSource] = useState(false)
   const [lifecycleSources, setLifecycleSources] = useState<LifecycleSource[]>([])
@@ -378,6 +394,39 @@ export function App() {
     }
   }
 
+  const runLocalSourceImport = async (kind: 'text' | 'pdf') => {
+    setIsImportingSource(true)
+    setLocalSourceImportError('')
+    setLocalSourceImport(null)
+    try {
+      const result = kind === 'text'
+        ? await postJson(
+          '/sources/text',
+          {
+            topic_id: retrievalTopicId.trim(),
+            title: sourceTitle.trim(),
+            content: sourceText,
+          },
+          { 'Idempotency-Key': crypto.randomUUID() },
+        )
+        : await (async () => {
+          const form = new FormData()
+          form.set('topic_id', retrievalTopicId.trim())
+          form.set('title', sourceTitle.trim())
+          form.set('file', sourcePdf as File)
+          return postForm('/sources/pdf', form, { 'Idempotency-Key': crypto.randomUUID() })
+        })()
+      if (result.response.status !== 201) {
+        throw new Error(result.payload.detail ?? `HTTP ${result.response.status}`)
+      }
+      setLocalSourceImport(result.payload as SourceImportResponse)
+    } catch (error) {
+      setLocalSourceImportError(error instanceof Error ? error.message : '本地资料导入失败')
+    } finally {
+      setIsImportingSource(false)
+    }
+  }
+
   const loadSources = async () => {
     setIsManagingSources(true)
     setLifecycleError('')
@@ -544,7 +593,47 @@ export function App() {
             <span>资料 ID：{sourceImport.source.id}</span>
             <span>Revision：{sourceImport.source.revision_id}</span>
             <span>Run：{sourceImport.ingestion_run.id} · {sourceImport.ingestion_run.status} / {sourceImport.ingestion_run.checkpoint}</span>
-            <a href={sourceImport.source.final_url} target="_blank" rel="noreferrer">打开最终来源 URL</a>
+            {sourceImport.source.final_url ? (
+              <a href={sourceImport.source.final_url} target="_blank" rel="noreferrer">打开最终来源 URL</a>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="retrieval-panel source-import-panel" aria-labelledby="local-source-import-title">
+        <div className="panel-heading">
+          <p className="eyebrow">M2 PDF & TEXT IMPORT CHECK</p>
+          <h2 id="local-source-import-title">导入文本与 PDF 资料</h2>
+          <p>粘贴文本会先标准化；PDF 必须包含可提取文本。相同 Topic 内的相同内容会复用不可变资料版本，不重复解析。</p>
+        </div>
+        <div className="retrieval-form">
+          <label>
+            <span>资料标题</span>
+            <input value={sourceTitle} onChange={(event) => setSourceTitle(event.target.value)} placeholder="例如：M2 验收笔记" />
+          </label>
+          <label>
+            <span>粘贴文本</span>
+            <textarea value={sourceText} onChange={(event) => setSourceText(event.target.value)} placeholder="粘贴需要导入的正文" rows={5} />
+          </label>
+          <button type="button" onClick={() => runLocalSourceImport('text')} disabled={isImportingSource || !retrievalTopicId.trim() || !sourceTitle.trim() || !sourceText.trim()}>
+            {isImportingSource ? '导入中...' : '导入粘贴文本'}
+          </button>
+          <label>
+            <span>文本型 PDF</span>
+            <input type="file" accept="application/pdf,.pdf" onChange={(event) => setSourcePdf(event.target.files?.[0] ?? null)} />
+          </label>
+          <button type="button" onClick={() => runLocalSourceImport('pdf')} disabled={isImportingSource || !retrievalTopicId.trim() || !sourceTitle.trim() || !sourcePdf}>
+            {isImportingSource ? '上传中...' : '上传 PDF'}
+          </button>
+        </div>
+        {localSourceImportError ? <p className="retrieval-error" role="alert">{localSourceImportError}</p> : null}
+        {localSourceImport ? (
+          <div className="source-import-result" role="status">
+            <strong>{localSourceImport.source.title}</strong>
+            <span>资料 ID：{localSourceImport.source.id}</span>
+            <span>Revision：{localSourceImport.source.revision_id}</span>
+            <span>Run：{localSourceImport.ingestion_run.id} · {localSourceImport.ingestion_run.status}</span>
+            <span>{localSourceImport.repeated ? '已复用相同内容' : '已创建不可变版本'}</span>
           </div>
         ) : null}
       </section>

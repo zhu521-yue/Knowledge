@@ -19,7 +19,7 @@ from app.infrastructure.health import inspect_dependencies
 from app.infrastructure.provider_credentials import ProviderCredentialService
 from app.infrastructure.retrieval_artifacts import FileRetrievalArtifacts
 from app.infrastructure.retrieval_scope import RetrievalScopeResolver
-from app.infrastructure.source_imports import WebSourceImportService
+from app.infrastructure.source_imports import LocalSourceImportService, WebSourceImportService
 from app.infrastructure.sparse_index_store import SparseIndexStore
 from app.infrastructure.web_fetch import SafeWebFetcher
 from app.observability import RequestContextMiddleware, configure_structured_logging
@@ -51,6 +51,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             engine,
             active_settings.storage_raw_path,
             SafeWebFetcher(),
+        )
+        app.state.local_source_import_service = LocalSourceImportService(
+            engine,
+            active_settings.storage_raw_path,
         )
         embedding_settings = EmbeddingSettingsService(engine)
         app.state.retrieval_use_case = RetrieveTopicParents(
